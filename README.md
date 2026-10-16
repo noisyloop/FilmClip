@@ -7,6 +7,16 @@ network access** — everything runs locally with a bundled ffmpeg.
 
 > Status: early / under construction. PC version coming soon as well.
 
+## Download
+
+[**⬇ Download for Apple Silicon Macs (M1–M4)**](https://github.com/noisyloop/FilmClip/releases/download/v1.0.0/FilmClip-1.0.0-arm64.dmg)
+&nbsp;·&nbsp;
+[**⬇ Download for Intel Macs**](https://github.com/noisyloop/FilmClip/releases/download/v1.0.0/FilmClip-1.0.0-x64.dmg)
+
+Not sure which Mac you have? Apple menu → **About This Mac**: "Chip: Apple M…" means
+Apple Silicon, "Processor: Intel…" means Intel. See [Install](#install-dmg) for the
+first-launch step.
+
 ## Features
 
 - **Import** video, photos and music (button, menu, or drag & drop from Finder). Each item shows its **file size**, resolution and length; the library shows the total.
