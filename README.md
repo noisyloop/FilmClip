@@ -1,5 +1,11 @@
 # FilmClip
 
+[![Build macOS DMG](https://github.com/noisyloop/FilmClip/actions/workflows/build-mac.yml/badge.svg?branch=main)](https://github.com/noisyloop/FilmClip/actions/workflows/build-mac.yml)
+[![Release](https://img.shields.io/github/v/release/noisyloop/FilmClip?include_prereleases&label=release)](https://github.com/noisyloop/FilmClip/releases)
+[![Downloads](https://img.shields.io/github/downloads/noisyloop/FilmClip/total)](https://github.com/noisyloop/FilmClip/releases)
+[![Platform: macOS](https://img.shields.io/badge/platform-macOS%20(Apple%20Silicon%20%7C%20Intel)-lightgrey)](#download)
+[![License: MIT](https://img.shields.io/github/license/noisyloop/FilmClip)](LICENSE)
+
 A free, offline desktop video editor for macOS with a familiar consumer-editor layout:
 media library on the left, player in the middle, properties on the right, and a
 multi-track timeline along the bottom. **No account, no login, no watermark, no
