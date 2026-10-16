@@ -50,8 +50,10 @@ On Windows and Linux use `Ctrl` instead of `⌘` and `Alt` instead of `⌥`.
 
 ## Install (DMG)
 
-Download `FilmClip-<version>-arm64.dmg` (Apple Silicon) or `-x64.dmg` (Intel) from the
-GitHub Actions run artifacts (or a release), open it and drag FilmClip to Applications.
+Download `FilmClip-<version>-arm64.dmg` (Apple Silicon: M1/M2/M3/M4) or
+`FilmClip-<version>-x64.dmg` (Intel) from the
+[Releases page](https://github.com/noisyloop/FilmClip/releases), open it and drag
+FilmClip to Applications.
 
 The app is not signed with an Apple Developer ID, so the first time macOS will block it.
 Right-click FilmClip in Applications → **Open** → **Open**, or run:
@@ -59,6 +61,52 @@ Right-click FilmClip in Applications → **Open** → **Open**, or run:
 ```sh
 xattr -dr com.apple.quarantine /Applications/FilmClip.app
 ```
+
+### Install from Terminal (with checks)
+
+Set the version and your Mac's architecture (`arm64` for Apple Silicon, `x64` for Intel):
+
+```sh
+cd ~/Downloads
+VERSION=1.0.0
+ARCH=arm64
+DMG="FilmClip-$VERSION-$ARCH.dmg"
+
+# 1. Download from the release
+curl -LO "https://github.com/noisyloop/FilmClip/releases/download/v$VERSION/$DMG"
+
+# 2. Checksum: should match the sha256 shown next to the file on the release page
+shasum -a 256 "$DMG"
+
+# 3. Check the disk image isn't damaged
+hdiutil verify "$DMG"
+
+# 4. Mount it, copy the app to Applications, unmount
+hdiutil attach "$DMG" -nobrowse -mountpoint /Volumes/FilmClip
+ditto /Volumes/FilmClip/FilmClip.app /Applications/FilmClip.app
+hdiutil detach /Volumes/FilmClip
+
+# 5. Check it was built for your Mac (should say arm64 or x86_64)
+file /Applications/FilmClip.app/Contents/MacOS/FilmClip
+file /Applications/FilmClip.app/Contents/Resources/app.asar.unpacked/node_modules/ffmpeg-static/ffmpeg
+
+# 6. Signature check: "not signed" or "adhoc" is expected for this app
+codesign -dv /Applications/FilmClip.app 2>&1 | head -3
+
+# 7. Let macOS open the unsigned app, then launch it
+xattr -dr com.apple.quarantine /Applications/FilmClip.app
+open /Applications/FilmClip.app
+```
+
+To see the app's log output (useful when reporting a bug), run it directly instead of `open`:
+
+```sh
+/Applications/FilmClip.app/Contents/MacOS/FilmClip
+```
+
+The checksum confirms the file you downloaded is the one GitHub stored for the
+release. Because the app isn't signed with an Apple Developer ID, it doesn't prove
+who built it.
 
 ## Develop
 
