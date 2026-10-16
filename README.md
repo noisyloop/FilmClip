@@ -1,11 +1,27 @@
 # FilmClip
 
+[![Build macOS DMG](https://github.com/noisyloop/FilmClip/actions/workflows/build-mac.yml/badge.svg?branch=main)](https://github.com/noisyloop/FilmClip/actions/workflows/build-mac.yml)
+[![Release](https://img.shields.io/github/v/release/noisyloop/FilmClip?include_prereleases&label=release)](https://github.com/noisyloop/FilmClip/releases)
+[![Downloads](https://img.shields.io/github/downloads/noisyloop/FilmClip/total)](https://github.com/noisyloop/FilmClip/releases)
+[![Platform: macOS](https://img.shields.io/badge/platform-macOS%20(Apple%20Silicon%20%7C%20Intel)-lightgrey)](#download)
+[![License: MIT](https://img.shields.io/github/license/noisyloop/FilmClip)](LICENSE)
+
 A free, offline desktop video editor for macOS with a familiar consumer-editor layout:
 media library on the left, player in the middle, properties on the right, and a
 multi-track timeline along the bottom. **No account, no login, no watermark, no
 network access** — everything runs locally with a bundled ffmpeg.
 
 > Status: early / under construction. PC version coming soon as well.
+
+## Download
+
+[**⬇ Download for Apple Silicon Macs (M1–M4)**](https://github.com/noisyloop/FilmClip/releases/download/v1.0.0/FilmClip-1.0.0-arm64.dmg)
+&nbsp;·&nbsp;
+[**⬇ Download for Intel Macs**](https://github.com/noisyloop/FilmClip/releases/download/v1.0.0/FilmClip-1.0.0-x64.dmg)
+
+Not sure which Mac you have? Apple menu → **About This Mac**: "Chip: Apple M…" means
+Apple Silicon, "Processor: Intel…" means Intel. See [Install](#install-dmg) for the
+first-launch step.
 
 ## Features
 
