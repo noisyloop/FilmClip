@@ -33,7 +33,9 @@ first-launch step.
 - **Effects**: brightness, contrast, saturation, blur, black & white, sepia, invert, vignette, flip, plus one-click presets (Vivid, Faded, Moody, Bright, Mirror…).
 - **Transitions**: fade in/out, dip to white, quick fade.
 - **Titles**: 8 presets (basic, subtitle, lower third, neon, …) with font, size, color, outline, glow, background box, position and fade.
-- **Audio**: clip volume/mute, speed (0.25×–4×), music track with fades.
+- **Audio**: three audio tracks (**Music**, **Sound FX**, **Voice-over**) with **waveforms**; drag clips between them. Per-clip volume, mute, fades and speed (0.1×–8×).
+- **Detach audio** from a video clip (right-click → Detach Audio, `⇧⌘D`) to move or trim the sound on its own.
+- **Record voice-overs** from your microphone (`⇧⌘R` or the Record button): the video plays silently from the playhead while you talk, and the recording lands on the Voice-over track. Recordings are saved as `.m4a` in `~/Music/FilmClip Recordings`.
 - **Export** to MP4, MOV, WebM, GIF or MP3 at 480p–4K, 24–60 fps. Pick Low/Medium/High quality or a **target file size in MB**; the dialog shows a live **estimated file size** and the actual size when done.
 - Projects save as `.fcproj` files.
 
@@ -56,6 +58,8 @@ Press `?` or `⌘/` in the app to see this list.
 | `⌘R` | Reverse clip |
 | `⌘⇧>` / `⌘⇧<` | Speed up / slow down |
 | `⌘⇧M` | Mute / unmute clip |
+| `⌘⇧D` | Detach audio from a video clip |
+| `⌘⇧R` | Record voice-over (`Space` stops) |
 | `⌘T` | Add title at playhead |
 | `⌘Z` / `⇧⌘Z` | Undo / redo |
 | `⌘=` / `⌘-` / `⇧Z` | Zoom timeline in / out / fit |

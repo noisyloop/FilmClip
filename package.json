@@ -41,7 +41,7 @@
       "gatekeeperAssess": false,
       "target": ["dmg"],
       "extendInfo": {
-        "NSMicrophoneUsageDescription": "FilmClip does not record audio.",
+        "NSMicrophoneUsageDescription": "FilmClip records voice-overs from your microphone when you press Record.",
         "NSCameraUsageDescription": "FilmClip does not use the camera."
       }
     },

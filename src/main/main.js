@@ -1,11 +1,11 @@
 // FilmClip main process. Fully offline: no accounts, no network calls.
-const { app, BrowserWindow, ipcMain, dialog, Menu, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, shell, systemPreferences } = require('electron');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const RP = require('../shared/render-plan');
-const { reverseVideo } = require('./reverse');
+const { reverseVideo, run: ffmpegRun } = require('./reverse');
 
 const ffmpegPath = require('ffmpeg-static').replace('app.asar', 'app.asar.unpacked');
 
@@ -72,6 +72,8 @@ function buildMenu() {
       { label: 'Speed Up', accelerator: 'CmdOrCtrl+Shift+.', registerAccelerator: false, click: () => send('speedUp') },
       { label: 'Slow Down', accelerator: 'CmdOrCtrl+Shift+,', registerAccelerator: false, click: () => send('speedDown') },
       { label: 'Mute / Unmute Clip', accelerator: 'CmdOrCtrl+Shift+M', click: () => send('mute') },
+      { label: 'Detach Audio', accelerator: 'CmdOrCtrl+Shift+D', click: () => send('detachAudio') },
+      { label: 'Record Voice-over', accelerator: 'CmdOrCtrl+Shift+R', click: () => send('record') },
       { type: 'separator' },
       { label: 'Add Title at Playhead', accelerator: 'CmdOrCtrl+T', click: () => send('addTitle') }
     ] },
@@ -134,6 +136,32 @@ function makeProxy(file) {
   });
 }
 
+/**
+ * Waveform peaks for a file: one byte (0-255) per 1/100 s, from a mono 4 kHz decode.
+ * Square-root scaled so quiet passages are still visible.
+ */
+const PEAKS_PER_SECOND = 100;
+function audioPeaks(file) {
+  return new Promise((resolve) => {
+    const SAMPLES = 4000 / PEAKS_PER_SECOND;
+    const p = spawn(ffmpegPath, ['-v', 'error', '-i', file, '-vn', '-ac', '1', '-ar', '4000', '-f', 's16le', '-']);
+    const out = [];
+    let max = 0, n = 0, carry = null;
+    p.stdout.on('data', (chunk) => {
+      let buf = carry ? Buffer.concat([carry, chunk]) : chunk;
+      const even = buf.length - (buf.length % 2);
+      carry = even < buf.length ? buf.subarray(even) : null;
+      for (let i = 0; i < even; i += 2) {
+        const v = Math.abs(buf.readInt16LE(i));
+        if (v > max) max = v;
+        if (++n === SAMPLES) { out.push(Math.min(255, Math.round(Math.sqrt(max / 32768) * 255))); max = 0; n = 0; }
+      }
+    });
+    p.on('error', () => resolve(null));
+    p.on('close', () => resolve(out.length ? Buffer.from(out) : null));
+  });
+}
+
 const reverseJobs = new Map();
 /** Reversed copy of a whole video (used by reversed clips for preview and export), cached by path + mtime. */
 function makeReversed({ file, duration, hasAudio }) {
@@ -158,6 +186,24 @@ ipcMain.handle('media:pick', async () => {
 ipcMain.handle('media:probe', (_e, files) => Promise.all(files.map(probe)));
 ipcMain.handle('media:proxy', (_e, file) => makeProxy(file));
 ipcMain.handle('media:reverse', (_e, opts) => makeReversed(opts));
+ipcMain.handle('media:peaks', (_e, file) => audioPeaks(file));
+ipcMain.handle('mic:access', async () => (process.platform === 'darwin' ? systemPreferences.askForMediaAccess('microphone') : true));
+ipcMain.handle('recording:save', async (_e, bytes) => {
+  const dir = path.join(app.getPath('music'), 'FilmClip Recordings');
+  fs.mkdirSync(dir, { recursive: true });
+  const d = new Date();
+  const p2 = (n) => String(n).padStart(2, '0');
+  const name = `Voice-over ${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}.${p2(d.getMinutes())}.${p2(d.getSeconds())}`;
+  const tmp = path.join(os.tmpdir(), `${name}.webm`);
+  const out = path.join(dir, `${name}.m4a`);
+  fs.writeFileSync(tmp, Buffer.from(bytes));
+  try {
+    await ffmpegRun(ffmpegPath, ['-i', tmp, '-vn', '-c:a', 'aac', '-b:a', '192k', out]);
+  } finally {
+    fs.rmSync(tmp, { force: true });
+  }
+  return out;
+});
 ipcMain.handle('media:exists', (_e, p) => !!p && fs.existsSync(p));
 // Native text editing for focused input fields (menu items are routed through the renderer).
 ipcMain.handle('edit:native', (e, cmd) => {

@@ -227,6 +227,8 @@
     const segments = [];
 
     const addInput = (a) => { args.push(...a); return inputIndex++; };
+    // Audio-only formats build no video at all (a graph of only generated video ends in an ffmpeg assertion).
+    const vpush = (f) => { if (fmtInfo.video) graph.push(f); };
 
     // Main (magnetic) video track.
     for (const clip of project.tracks.video) {
@@ -262,8 +264,8 @@
         v.push(`scale=${sw}:${sh}:flags=bicubic`, 'setsar=1');
         v.push(...effectFilters(clip.effects, W));
         v.push('format=yuva420p');
-        graph.push(`[${idx}:v]${v.join(',')}[fg${n}]`);
-        graph.push(`color=c=black:s=${W}x${H}:r=${fps}:d=${fmt(D)},format=yuv420p[bg${n}]`);
+        vpush(`[${idx}:v]${v.join(',')}[fg${n}]`);
+        vpush(`color=c=black:s=${W}x${H}:r=${fps}:d=${fmt(D)},format=yuv420p[bg${n}]`);
         const ox = Math.round((W - sw) / 2 + tf.x * W);
         const oy = Math.round((H - sh) / 2 + tf.y * H);
         v.length = 0;
@@ -275,7 +277,7 @@
       if (fi > 0) v.push(`fade=t=in:st=0:d=${fmt(fi)}:color=${color}`);
       if (fo > 0) v.push(`fade=t=out:st=${fmt(D - fo)}:d=${fmt(fo)}:color=${color}`);
       v.push(`tpad=stop_mode=clone:stop_duration=${fmt(D)}`, `trim=duration=${fmt(D)}`, 'setpts=PTS-STARTPTS');
-      graph.push(`${isIdentity(tf) ? `[${idx}:v]` : `[bg${n}][fg${n}]`}${v.join(',')}[v${n}]`);
+      vpush(`${isIdentity(tf) ? `[${idx}:v]` : `[bg${n}][fg${n}]`}${v.join(',')}[v${n}]`);
 
       const vol = clip.muted ? 0 : num(clip.volume, 1);
       if (!isImage && m.hasAudio) {
@@ -296,18 +298,19 @@
     if (total - mainDur > 0.01) {
       const n = segments.length;
       const D = total - mainDur;
-      graph.push(`color=c=black:s=${W}x${H}:r=${fps}:d=${fmt(D)},setsar=1,format=yuv420p[v${n}]`);
+      vpush(`color=c=black:s=${W}x${H}:r=${fps}:d=${fmt(D)},setsar=1,format=yuv420p[v${n}]`);
       graph.push(`anullsrc=r=${AUDIO_RATE}:cl=stereo,atrim=duration=${fmt(D)},aformat=sample_fmts=fltp:channel_layouts=stereo[a${n}]`);
       segments.push(D);
     }
 
-    const pads = segments.map((_, i) => `[v${i}][a${i}]`).join('');
-    graph.push(`${pads}concat=n=${segments.length}:v=1:a=1[vcat][acat]`);
+    const v1 = fmtInfo.video ? 1 : 0;
+    const pads = segments.map((_, i) => `${v1 ? `[v${i}]` : ''}[a${i}]`).join('');
+    graph.push(`${pads}concat=n=${segments.length}:v=${v1}:a=1${v1 ? '[vcat]' : ''}[acat]`);
 
     // Text overlays (pre-rendered transparent PNGs, WYSIWYG with the preview).
     let vLabel = 'vcat';
     let t = 0;
-    for (const tc of project.tracks.text) {
+    for (const tc of fmtInfo.video ? project.tracks.text : []) {
       const png = textImages && textImages[tc.id];
       const dur = num(tc.duration, 0);
       if (!png || dur <= 0) continue;
@@ -326,15 +329,16 @@
       t++;
     }
 
-    // Music / voice-over track.
+    // Audio tracks (music, sound effects, voice-over); all lanes are mixed together.
     const extra = [];
     project.tracks.audio.forEach((ac, i) => {
       const m = media[ac.mediaId];
       if (!m || !(m.type === 'audio' || m.hasAudio)) return;
       const D = clipDuration(ac);
       if (D <= 0.01) return;
-      const idx = addInput(['-ss', fmt(num(ac.in, 0)), '-t', fmt(num(ac.out, 0) - num(ac.in, 0)), '-i', m.path]);
-      const a = ['asetpts=PTS-STARTPTS'];
+      const src = sourceRange(ac, m);
+      const idx = addInput(['-ss', fmt(src.ss), '-t', fmt(src.t), '-i', src.path]);
+      const a = [...(src.filterReverse ? ['areverse'] : []), 'asetpts=PTS-STARTPTS', ...atempoChain(num(ac.speed, 1) || 1)];
       const vol = ac.muted ? 0 : num(ac.volume, 1);
       if (Math.abs(vol - 1) > 1e-3) a.push(`volume=${fmt(vol)}`);
       const fi = Math.min(num(ac.fadeIn, 0), D / 2);
@@ -362,7 +366,6 @@
     }
 
     // Terminate streams the chosen format does not use.
-    if (!fmtInfo.video) graph.push(`[${vLabel}]nullsink`);
     if (!fmtInfo.audio) graph.push(`[${aLabel}]anullsink`);
 
     args.push('-filter_complex', graph.join(';'));

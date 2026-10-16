@@ -95,6 +95,9 @@
       <button class="icon" id="dupBtn" title="Duplicate clip (⌘D)">⧉</button>
       <button class="icon" id="reverseBtn" title="Reverse clip (⌘R)">↺</button>
       <button class="icon" id="addTextBtn" title="Add title at playhead (⌘T)">T</button>
+      <button class="icon" id="detachBtn" title="Detach audio from video clip (⇧⌘D)">⇣♪</button>
+      <span class="sep"></span>
+      <button class="icon rec" id="recordBtn" title="Record voice-over at the playhead (⇧⌘R)"><span class="dot"></span> Record</button>
       <span class="grow"></span>
       <button class="icon" id="shortcutsBtn" title="Keyboard shortcuts (⌘/)">⌨</button>
       <span class="sep"></span>
@@ -106,14 +109,18 @@
         <div class="ruler-head"></div>
         <div class="track-head">T <span>Titles</span></div>
         <div class="track-head main">🎞 <span>Video</span></div>
-        <div class="track-head">♪ <span>Music</span></div>
+        <div class="track-head lane">♪ <span>Music</span></div>
+        <div class="track-head lane">🔊 <span>Sound FX</span></div>
+        <div class="track-head lane">🎙 <span>Voice-over</span></div>
       </div>
       <div class="tracks-scroll" id="tracksScroll">
         <div class="tracks" id="tracks">
           <div class="ruler" id="ruler"></div>
           <div class="track" data-track="text" id="trackText"></div>
           <div class="track main" data-track="video" id="trackVideo"></div>
-          <div class="track" data-track="audio" id="trackAudio"></div>
+          <div class="track lane" data-track="audio" data-lane="0" id="trackAudio0"></div>
+          <div class="track lane" data-track="audio" data-lane="1" id="trackAudio1"></div>
+          <div class="track lane" data-track="audio" data-lane="2" id="trackAudio2"></div>
           <div class="ctx-mark" id="ctxMark" hidden></div>
           <div class="playhead" id="playhead"><div class="knob"></div></div>
         </div>

@@ -30,7 +30,15 @@ const project = {
       { id: 'c4', mediaId: 'r', in: 0.5, out: 3.5, speed: 1.5, reverse: true }
     ],
     text: [{ id: 't1', start: 1, duration: 4, fade: 0.3 }],
-    audio: [{ id: 'a1', mediaId: 'm', start: 0.5, in: 0, out: 3, volume: 0.5, fadeIn: 0.5 }]
+    audio: [
+      { id: 'a1', mediaId: 'm', lane: 0, start: 0.5, in: 0, out: 3, volume: 0.5, fadeIn: 0.5 },
+      // sound effect: sped up, ends at 1 + 2 / 2 = 2 s
+      { id: 'a2', mediaId: 'm', lane: 1, start: 1, in: 0, out: 2, speed: 2 },
+      // voice-over reversed with filters, ends at 6 + 1.5 = 7.5 s (longer than the video: sets the length)
+      { id: 'a3', mediaId: 'm', lane: 2, start: 6, in: 0.5, out: 2, reverse: true },
+      // detached audio of a reversed video clip, read from the pre-reversed copy
+      { id: 'a4', mediaId: 'r', lane: 1, start: 0, in: 1, out: 2, reverse: true, speed: 0.5 }
+    ]
   }
 };
 let failed = 0;
@@ -76,7 +84,21 @@ for (const format of ['mp4', 'mov', 'webm', 'gif', 'mp3']) {
   const r = spawnSync(ffmpeg, args, { encoding: 'utf8' });
   const ok = r.status === 0 && fs.existsSync(out);
   if (!ok) { failed++; console.error(r.stderr.split('\n').slice(-15).join('\n')); }
+  const actual = ok ? probeDuration(out) : 0;
+  if (ok && Math.abs(actual - 7.5) > 0.2) { failed++; console.log(`FAIL ${format} length ${actual}s, expected 7.5s`); }
   console.log(`${ok ? 'ok  ' : 'FAIL'} ${format}  duration=${duration}s  estimate=${RP.formatBytes(RP.estimateSize(project, opts))}  actual=${ok ? RP.formatBytes(fs.statSync(out).size) : '-'}`);
+}
+// Audio-only project (no video clips) exported to MP3; a 3 s sound at 2× must end at 1.5 s.
+{
+  const p = { settings: { width: 640, height: 360, fps: 30 }, media: [{ id: 'm', type: 'audio', path: path.join(tmp, 'm.mp3'), hasAudio: true, duration: 3 }],
+    tracks: { video: [], text: [{ id: 't', start: 0, duration: 3 }], audio: [{ id: 'a', mediaId: 'm', lane: 2, start: 0, in: 0, out: 3, speed: 2 }] } };
+  const out = path.join(tmp, 'audio-only.mp3');
+  const r = spawnSync(ffmpeg, RP.buildFfmpegArgs(p, { format: 'mp3', resolution: '480', quality: 'medium', outputPath: out }, {}).args, { encoding: 'utf8' });
+  const sd = spawnSync(ffmpeg, ['-i', out, '-af', 'silencedetect=n=-40dB:d=0.3', '-f', 'null', '-'], { encoding: 'utf8' }).stderr;
+  const m = sd.match(/silence_start: ([\d.]+)/);
+  const ok = r.status === 0 && m && Math.abs(Number(m[1]) - 1.5) < 0.1;
+  if (!ok) failed++;
+  console.log(`${ok ? 'ok  ' : 'FAIL'} audio-only mp3, 2× speed ends at ${m ? m[1] : '?'}s`);
 }
 process.exit(failed ? 1 : 0);
 })();

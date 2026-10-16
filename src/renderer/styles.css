@@ -105,8 +105,8 @@ button, select, input { font: inherit; color: inherit; }
 .timeline-toolbar .sep { width: 1px; height: 18px; background: var(--line); margin: 0 6px; }
 .timeline-toolbar .grow { flex: 1; }
 .timeline-toolbar input[type=range] { width: 140px; accent-color: var(--accent); margin-left: 6px; }
-.timeline { flex: 1; display: flex; min-height: 0; }
-.track-heads { width: 96px; flex: none; border-right: 1px solid var(--line); }
+.timeline { flex: 1; display: flex; min-height: 0; overflow-y: auto; align-items: flex-start; }
+.track-heads { width: 112px; flex: none; white-space: nowrap; border-right: 1px solid var(--line); }
 .ruler-head { height: 26px; border-bottom: 1px solid var(--line); }
 .track-head { height: 46px; display: flex; align-items: center; gap: 6px; padding: 0 10px; color: var(--muted); border-bottom: 1px solid var(--line); font-size: 12px; }
 .track-head.main { height: 70px; }
@@ -118,6 +118,14 @@ button, select, input { font: inherit; color: inherit; }
 .ruler .tick span { position: absolute; left: 4px; bottom: 10px; font-size: 10px; color: var(--muted); white-space: nowrap; }
 .track { height: 46px; position: relative; border-bottom: 1px solid var(--line); }
 .track.main { height: 70px; background: rgba(255,255,255,.015); }
+.track.lane, .track-head.lane { height: 40px; }
+.clip .wave { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.clip.audio.recording { background: #e5484d; opacity: .85; border-color: #ff8a8f; pointer-events: none; }
+.icon.rec { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.icon.rec .dot { width: 10px; height: 10px; border-radius: 50%; background: #e5484d; }
+.icon.rec.on { background: #e5484d; color: #fff; }
+.icon.rec.on .dot { background: #fff; animation: blink 1s steps(2) infinite; }
+@keyframes blink { 50% { opacity: .2; } }
 .track.drop { background: rgba(25,211,197,.08); }
 .clip { position: absolute; top: 4px; bottom: 4px; border-radius: 5px; overflow: hidden; cursor: grab; border: 1px solid rgba(255,255,255,.15); display: flex; align-items: flex-end; }
 .clip.video { background: var(--video) left center/auto 100% repeat-x; }
@@ -151,7 +159,7 @@ dialog::backdrop { background: rgba(0,0,0,.6); }
 .progress span { position: absolute; right: 0; top: 10px; font-size: 11px; color: var(--muted); }
 .export-form menu { display: flex; justify-content: flex-end; gap: 8px; padding: 0; margin: 12px 0 0; }
 
-.toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(40px); background: var(--panel-2); border: 1px solid var(--line); padding: 8px 14px; border-radius: 8px; opacity: 0; transition: .25s; pointer-events: none; z-index: 10; }
+.toast { position: fixed; left: 50%; top: 52px; transform: translateX(-50%) translateY(-12px); background: var(--panel-2); border: 1px solid var(--line); padding: 8px 14px; border-radius: 8px; opacity: 0; transition: .25s; pointer-events: none; z-index: 10; }
 .toast.show { opacity: 1; transform: translateX(-50%); }
 
 .hint { margin: 0 0 6px; font-size: 11px; }

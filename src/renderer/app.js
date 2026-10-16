@@ -266,9 +266,12 @@ function matchAspect(m) {
   setAspect(best[0]);
 }
 
-function addAudioClip(m, start) {
+const AUDIO_LANES = ['Music', 'Sound FX', 'Voice-over'];
+const laneOf = (c) => clamp(Math.round(c.lane || 0), 0, AUDIO_LANES.length - 1);
+
+function addAudioClip(m, start, lane = 0) {
   pushHistory();
-  const clip = { id: uid(), mediaId: m.id, start: Math.max(0, start), in: 0, out: m.duration || 5, volume: 1, muted: false, fadeIn: 0, fadeOut: 0 };
+  const clip = { id: uid(), mediaId: m.id, lane, start: Math.max(0, start), in: 0, out: m.duration || 5, speed: 1, volume: 1, muted: false, fadeIn: 0, fadeOut: 0 };
   P().tracks.audio.push(clip);
   state.selected = { track: 'audio', id: clip.id };
   refreshAll();
@@ -400,12 +403,13 @@ function insertClip(track, c, t) {
   state.selected = { track, id: c.id };
 }
 
-function pasteClip(at) {
+function pasteClip(at, lane) {
   const cb = state.clipboard;
   if (!cb) return toast('Nothing to paste — copy a clip first');
   pushHistory();
   const c = clone(cb.clip);
   c.id = uid();
+  if (cb.track === 'audio' && lane != null) c.lane = lane;
   insertClip(cb.track, c, at ?? state.time);
   refreshAll();
 }
@@ -428,7 +432,7 @@ function duplicateSelected() {
 // ---------------------------------------------------------------- speed / reverse / mute
 const SPEED_PRESETS = [0.25, 0.5, 0.75, 1, 1.5, 2, 4, 8];
 const SPEED_STEPS = [0.1, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4, 6, 8];
-const canChangeSpeed = (track, c) => track === 'video' && !isImageClip(c);
+const canChangeSpeed = (track, c) => track === 'audio' || (track === 'video' && !isImageClip(c));
 
 function setSpeed(c, v) {
   pushHistory();
@@ -438,7 +442,7 @@ function setSpeed(c, v) {
 }
 function speedStep(dir) {
   const c = selectedClip();
-  if (!c || !canChangeSpeed(state.selected.track, c)) return toast('Select a video clip first');
+  if (!c || !canChangeSpeed(state.selected.track, c)) return toast('Select a video or audio clip first');
   const cur = c.speed || 1;
   const next = dir > 0 ? SPEED_STEPS.find((s) => s > cur + 1e-6) : [...SPEED_STEPS].reverse().find((s) => s < cur - 1e-6);
   if (next == null) return toast(`Speed ${cur}×`);
@@ -488,6 +492,125 @@ function resetTransform(c) {
   c.transform = { x: 0, y: 0, scale: 1 };
   refreshAll();
 }
+
+// ---------------------------------------------------------------- audio: waveforms, detach, voice-over
+const PEAKS_PER_SECOND = 100; // matches audioPeaks() in main.js
+const peaks = new Map(); // mediaId -> Uint8Array | 'loading' | null
+
+function ensurePeaks(m) {
+  if (!m || peaks.has(m.id) || !(m.type === 'audio' || m.hasAudio)) return;
+  peaks.set(m.id, 'loading');
+  api.peaks(m.path).then((p) => { peaks.set(m.id, p ? new Uint8Array(p) : null); renderTimeline(); }, () => peaks.set(m.id, null));
+}
+
+/** Draw a clip's waveform (scaled by its volume) into a canvas inside the clip element. */
+function drawWave(node, c, m) {
+  ensurePeaks(m);
+  const pk = m && peaks.get(m.id);
+  if (!(pk instanceof Uint8Array)) return;
+  const len = RP.clipDuration(c);
+  const W = Math.max(1, Math.min(4096, Math.round(len * state.pps)));
+  const H = 32;
+  const cv = el('canvas', 'wave');
+  cv.width = W; cv.height = H;
+  const g = cv.getContext('2d');
+  g.fillStyle = 'rgba(255,255,255,.55)';
+  const sp = c.speed || 1;
+  const gain = c.muted ? 0.05 : Math.min(1, c.volume ?? 1);
+  const srcAt = (t) => (c.reverse ? c.out - t * sp : c.in + t * sp);
+  for (let x = 0; x < W; x++) {
+    let a = Math.floor(srcAt((x / W) * len) * PEAKS_PER_SECOND);
+    let b = Math.floor(srcAt(((x + 1) / W) * len) * PEAKS_PER_SECOND);
+    if (a > b) [a, b] = [b, a];
+    let v = 0;
+    for (let i = Math.max(0, a); i <= Math.min(pk.length - 1, Math.max(a, b - 1)); i++) if (pk[i] > v) v = pk[i];
+    const h = Math.max(1, (v / 255) * H * Math.min(1, gain));
+    g.fillRect(x, (H - h) / 2, 1, h);
+  }
+  node.insertBefore(cv, node.firstChild);
+}
+
+/** Free audio track for a time range, preferring Sound FX, then Voice-over, then Music. */
+function freeLane(start, len) {
+  for (const lane of [1, 2, 0]) {
+    const busy = P().tracks.audio.some((a) => laneOf(a) === lane && a.start < start + len - 1e-3 && a.start + RP.clipDuration(a) > start + 1e-3);
+    if (!busy) return lane;
+  }
+  return 1;
+}
+
+/** Move a video clip's sound to its own audio clip; the video clip is muted. */
+function detachAudio(c) {
+  if (!c) { c = selectedClip(); if (!c || state.selected.track !== 'video') return toast('Select a video clip first'); }
+  const m = mediaById(c.mediaId);
+  if (!m || m.type !== 'video' || !m.hasAudio) return toast('This clip has no audio');
+  if (c.audioDetached) return toast('Audio is already detached');
+  pushHistory();
+  const start = clipStart('video', c), len = RP.clipDuration(c);
+  const a = { id: uid(), mediaId: m.id, lane: freeLane(start, len), start, in: c.in, out: c.out, speed: c.speed || 1, reverse: !!c.reverse,
+    volume: c.volume ?? 1, muted: !!c.muted, fadeIn: c.fadeIn || 0, fadeOut: c.fadeOut || 0 };
+  P().tracks.audio.push(a);
+  c.muted = true;
+  c.audioDetached = true;
+  state.selected = { track: 'audio', id: a.id };
+  refreshAll();
+  toast(`Audio detached to ${AUDIO_LANES[a.lane]}`);
+}
+
+// Voice-over recording: playback runs (muted) from the playhead while the microphone records.
+const rec = { active: false, start: 0, recorder: null, stream: null, chunks: [] };
+
+async function startRecording(at) {
+  if (rec.active) return;
+  if (!(await api.micAccess())) return toast('Microphone blocked — allow FilmClip in System Settings → Privacy & Security → Microphone');
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+  } catch (_) {
+    return toast('No microphone available');
+  }
+  pause();
+  if (at != null) setTime(at);
+  Object.assign(rec, { active: true, start: state.time, stream, chunks: [] });
+  rec.recorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+  rec.recorder.ondataavailable = (e) => { if (e.data.size) rec.chunks.push(e.data); };
+  rec.recorder.onstop = finishRecording;
+  rec.recorder.start(250);
+  $('#recordBtn').classList.add('on');
+  $('#recordBtn').lastChild.textContent = ' Stop';
+  toast('Recording… press Space or click Stop to finish');
+  renderTimeline();
+  play(1);
+}
+
+function stopRecording() {
+  if (!rec.active || rec.recorder.state === 'inactive') return;
+  rec.recorder.stop();
+  rec.stream.getTracks().forEach((t) => t.stop());
+  pause();
+}
+
+async function finishRecording() {
+  const start = rec.start;
+  const blob = new Blob(rec.chunks, { type: 'audio/webm' });
+  rec.active = false;
+  $('#recordBtn').classList.remove('on');
+  $('#recordBtn').lastChild.textContent = ' Record';
+  renderTimeline();
+  if (!blob.size) return toast('Nothing was recorded');
+  toast('Saving voice-over…');
+  try {
+    const file = await api.saveRecording(new Uint8Array(await blob.arrayBuffer()));
+    await importPaths([file]);
+    const m = P().media.find((x) => x.path === file);
+    if (m) addAudioClip(m, start, 2);
+    toast('Voice-over added');
+  } catch (err) {
+    toast('Couldn’t save the recording');
+  }
+}
+
+function toggleRecording() { return rec.active ? stopRecording() : startRecording(); }
 
 // ---------------------------------------------------------------- navigation
 function editPoints() {
@@ -561,8 +684,21 @@ function renderTimeline() {
   });
   const tt = $('#trackText'); tt.innerHTML = '';
   P().tracks.text.forEach((c) => tt.appendChild(clipEl(c, 'text', c.start, c.duration, 'T  ' + c.text.split('\n')[0])));
-  const ta = $('#trackAudio'); ta.innerHTML = '';
-  P().tracks.audio.forEach((c) => { const m = mediaById(c.mediaId); ta.appendChild(clipEl(c, 'audio', c.start, RP.clipDuration(c), '♪  ' + (m ? m.name : 'Missing') + (c.muted ? '  🔇' : ''))); });
+  const lanes = AUDIO_LANES.map((_, i) => { const n = $('#trackAudio' + i); n.innerHTML = ''; return n; });
+  P().tracks.audio.forEach((c) => {
+    const m = mediaById(c.mediaId);
+    const tags = [c.reverse ? '↺' : '', (c.speed || 1) !== 1 ? `${c.speed}×` : '', c.muted ? '🔇' : ''].filter(Boolean);
+    const d = clipEl(c, 'audio', c.start, RP.clipDuration(c), '♪  ' + (m ? m.name : 'Missing') + (tags.length ? '  ' + tags.join(' ') : ''));
+    drawWave(d, c, m);
+    lanes[laneOf(c)].appendChild(d);
+  });
+  if (rec.active) {
+    const r = el('div', 'clip audio recording');
+    r.id = 'recClip';
+    r.style.left = rec.start * state.pps + 'px';
+    r.innerHTML = '<span class="label">⏺ Recording…</span>';
+    lanes[2].appendChild(r);
+  }
   updatePlayhead();
 }
 
@@ -593,8 +729,8 @@ function startClipDrag(e, clip, track, node) {
   const m = mediaById(clip.mediaId);
   const maxOut = m && m.type !== 'image' ? m.duration || orig.out : 3600;
   let changed = false;
-  node.setPointerCapture(e.pointerId);
 
+  // Listen on window: the timeline is redrawn while dragging, which replaces `node`.
   const onMove = (ev) => {
     const dt = (ev.clientX - x0) / state.pps;
     if (!changed && Math.abs(ev.clientX - x0) < 3) return;
@@ -608,6 +744,7 @@ function startClipDrag(e, clip, track, node) {
       clip.in = clamp(orig.in - dt * speed, 0, orig.out - 0.1); // a reversed clip ends at its source `in`
     } else if (mode === 'left' && clip.reverse) {
       clip.out = clamp(orig.out - dt * speed, orig.in + 0.1, maxOut);
+      if (track === 'audio') clip.start = Math.max(0, orig.start + (orig.out - clip.out) / speed);
     } else if (mode === 'right') {
       clip.out = clamp(orig.out + dt * speed, orig.in + 0.1, maxOut);
     } else if (mode === 'left') {
@@ -616,6 +753,9 @@ function startClipDrag(e, clip, track, node) {
       clip.in = nin;
     } else if (track === 'audio') {
       clip.start = Math.max(0, orig.start + dt);
+      // Drag up / down to move between the audio tracks.
+      const lane = document.elementFromPoint(ev.clientX, ev.clientY)?.closest('.track[data-lane]');
+      if (lane) clip.lane = Number(lane.dataset.lane);
     } else {
       node.style.transform = `translateX(${ev.clientX - x0}px)`;
       node.style.zIndex = 4;
@@ -625,8 +765,8 @@ function startClipDrag(e, clip, track, node) {
     renderPreviewFrame();
   };
   const onUp = (ev) => {
-    node.removeEventListener('pointermove', onMove);
-    node.removeEventListener('pointerup', onUp);
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
     if (changed && track === 'video' && mode === 'move') {
       const list = P().tracks.video;
       const from = list.indexOf(clip);
@@ -641,12 +781,14 @@ function startClipDrag(e, clip, track, node) {
     if (!changed) setTime(timeAtX(ev.clientX)); // plain click: move playhead too
     refreshAll();
   };
-  node.addEventListener('pointermove', onMove);
-  node.addEventListener('pointerup', onUp);
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
 }
 
 function updatePlayhead() {
   $('#playhead').style.left = state.time * state.pps + 'px';
+  const rc = $('#recClip');
+  if (rc) rc.style.width = Math.max(2, (state.time - rec.start) * state.pps) + 'px';
   $('#curTime').textContent = timecode(state.time);
   $('#totalTime').textContent = timecode(RP.projectDuration(P()));
 }
@@ -679,9 +821,12 @@ function setupTimelineEvents() {
     if (e.target.closest('.clip')) return;
     e.preventDefault();
     const t = timeAtX(e.clientX);
+    const laneEl = e.target.closest('.track[data-lane]');
+    const lane = laneEl ? Number(laneEl.dataset.lane) : undefined;
     showMenu(e.clientX, e.clientY, [
-      { label: 'Paste Here', kb: KB.mod + 'V', disabled: !state.clipboard, action: () => pasteClip(t) },
+      { label: 'Paste Here', kb: KB.mod + 'V', disabled: !state.clipboard, action: () => pasteClip(t, lane) },
       { label: 'Add Title Here', kb: KB.mod + 'T', action: () => addTitle(TITLE_PRESETS[0], t) },
+      { label: 'Record Voice-over Here', kb: KB.mod + KB.shift + 'R', action: () => { pause(); setTime(t); startRecording(t); } },
       '-',
       { label: 'Move Playhead Here', action: () => { pause(); setTime(t); } }
     ], t);
@@ -704,7 +849,7 @@ function setupTimelineEvents() {
       if (!m) return;
       if (kind === 'audio' || m.type === 'audio') {
         if (m.type === 'image') return toast('Photos go on the video track');
-        return addAudioClip(m, t);
+        return addAudioClip(m, t, Number(tr.dataset.lane || 0));
       }
       if (kind === 'video') {
         let idx = 0, acc = 0;
@@ -786,6 +931,12 @@ function renderInspector() {
   }
   if (track === 'audio') {
     const a = section('Audio');
+    const lr = el('div', 'row full', '<span>Track</span><select></select>');
+    const ls = lr.querySelector('select');
+    AUDIO_LANES.forEach((n, i) => ls.add(new Option(n, i, false, i === laneOf(c))));
+    ls.onchange = () => { pushHistory(); c.lane = Number(ls.value); commit(); };
+    a.appendChild(lr);
+    slider(a, 'Speed', c, 'speed', 0.1, 8, 0.05, (v) => v.toFixed(2) + '×');
     slider(a, 'Volume', c, 'volume', 0, 2, 0.01, pct);
     slider(a, 'Fade in', c, 'fadeIn', 0, 5, 0.1, secs);
     slider(a, 'Fade out', c, 'fadeOut', 0, 5, 0.1, secs);
@@ -1176,7 +1327,7 @@ function renderPreviewFrame() {
 }
 
 function setTime(t) {
-  state.time = clamp(t, 0, Math.max(0, RP.projectDuration(P())));
+  state.time = clamp(t, 0, rec.active ? Infinity : Math.max(0, RP.projectDuration(P())));
   if (state.playing) { preview.t0 = state.time; preview.wall = performance.now(); syncMedia(true); }
   updatePlayhead();
   renderPreviewFrame();
@@ -1191,7 +1342,7 @@ function syncMedia(force) {
   for (const v of [...preview.videos.values(), ...preview.reversed.values()]) if (v !== activeV && !v.paused) v.pause();
   if (activeV) {
     const c = hit.clip;
-    activeV.volume = c.muted ? 0 : clamp(c.volume ?? 1, 0, 1);
+    activeV.volume = c.muted || rec.active ? 0 : clamp(c.volume ?? 1, 0, 1);
     if (ps.live && rate > 0) {
       activeV.playbackRate = clamp((c.speed || 1) * rate, 0.0625, 16);
       if (force || preview.active !== c.id || Math.abs(activeV.currentTime - ps.time) > 0.3) activeV.currentTime = ps.time;
@@ -1207,18 +1358,23 @@ function syncMedia(force) {
   for (const ac of P().tracks.audio) {
     const m = mediaById(ac.mediaId);
     if (!m) continue;
+    // Reversed clips play the reversed copy of their video; plain audio files can't preview reversed.
+    const srcPath = ac.reverse ? m.reversedPath : m.previewPath || m.path;
     let a = preview.audios.get(ac.id);
-    if (!a) { a = new Audio(api.fileUrl(m.previewPath || m.path)); preview.audios.set(ac.id, a); }
+    if (a && a.dataset.src !== srcPath) { a.pause(); a = null; }
+    if (!a && srcPath) { a = new Audio(api.fileUrl(srcPath)); a.dataset.src = srcPath; preview.audios.set(ac.id, a); }
+    if (!a) continue;
     const local = t - ac.start;
     const len = RP.clipDuration(ac);
+    const sp = ac.speed || 1;
     if (rate > 0 && local >= 0 && local < len) {
       const fi = ac.fadeIn || 0, fo = ac.fadeOut || 0;
       let g = 1;
       if (fi > 0 && local < fi) g = local / fi;
       if (fo > 0 && local > len - fo) g = Math.min(g, (len - local) / fo);
-      a.volume = ac.muted ? 0 : clamp((ac.volume ?? 1) * g, 0, 1);
-      a.playbackRate = clamp(rate, 0.0625, 16);
-      const want = ac.in + local;
+      a.volume = ac.muted || rec.active ? 0 : clamp((ac.volume ?? 1) * g, 0, 1);
+      a.playbackRate = clamp(rate * sp, 0.0625, 16);
+      const want = ac.reverse ? (m.duration || 0) - (ac.out - local * sp) : ac.in + local * sp;
       if (force || Math.abs(a.currentTime - want) > 0.3) a.currentTime = want;
       if (a.paused) a.play().catch(() => {});
     } else if (!a.paused) a.pause();
@@ -1227,10 +1383,11 @@ function syncMedia(force) {
 
 /** Play at a rate: 1 = normal, 2/4/8 = fast forward, negative = backwards. */
 function play(rate = 1) {
-  const total = RP.projectDuration(P());
+  // While recording a voice-over, playback may run past the end of the project.
+  const total = rec.active ? Infinity : RP.projectDuration(P());
   if (total <= 0) return toast('Add some media to the timeline first');
   if (rate > 0 && state.time >= total - 0.01) state.time = 0;
-  if (rate < 0 && state.time <= 0.01) state.time = total;
+  if (rate < 0 && state.time <= 0.01) state.time = RP.projectDuration(P());
   preview.rate = rate;
   state.playing = true;
   $('#playBtn').textContent = '❚❚';
@@ -1256,6 +1413,7 @@ function play(rate = 1) {
 }
 
 function pause() {
+  if (rec.active) stopRecording(); // any stop (Space, K, clicking the timeline) ends the recording
   state.playing = false;
   preview.rate = 1;
   cancelAnimationFrame(preview.raf);
@@ -1443,9 +1601,20 @@ function openClipMenu(e, track, c, t) {
     { label: 'Trim Start to Here', disabled: !inside, action: () => trimTo(track, c, local, 'start') },
     { label: 'Trim End to Here', disabled: !inside, action: () => trimTo(track, c, local, 'end') }
   ];
+  const speedMenu = (disabled) => ({ label: `Speed (${sp}×)`, disabled, submenu: [
+    ...SPEED_PRESETS.map((v) => ({ label: v === 1 ? '1× Normal' : `${v}×`, checked: Math.abs(sp - v) < 1e-6, action: () => setSpeed(c, v) })),
+    '-',
+    { label: 'Speed Up', kb: KB.mod + KB.shift + '>', action: () => speedStep(1) },
+    { label: 'Slow Down', kb: KB.mod + KB.shift + '<', action: () => speedStep(-1) }
+  ] });
+  if (track === 'audio') {
+    items.push('-', speedMenu(false), { label: 'Move to Track', submenu: AUDIO_LANES.map((n, i) => ({
+      label: n, checked: laneOf(c) === i, action: () => { pushHistory(); c.lane = i; refreshAll(); } })) });
+  }
   if (track === 'video') {
     const vid = canChangeSpeed(track, c);
     items.push('-',
+      { label: 'Detach Audio', kb: KB.mod + KB.shift + 'D', disabled: !(m && m.type === 'video' && m.hasAudio) || !!c.audioDetached, action: () => detachAudio(c) },
       { label: 'Reverse', checked: !!c.reverse, kb: KB.mod + 'R', disabled: !vid, action: () => toggleReverse(c) },
       { label: `Speed (${sp}×)`, disabled: !vid, submenu: [
         ...SPEED_PRESETS.map((v) => ({ label: v === 1 ? '1× Normal' : `${v}×`, checked: Math.abs(sp - v) < 1e-6, action: () => setSpeed(c, v) })),
@@ -1488,6 +1657,8 @@ const SHORTCUTS = [
     [KB.mod + KB.shift + '>', 'Speed up'],
     [KB.mod + KB.shift + '<', 'Slow down'],
     [KB.mod + KB.shift + 'M', 'Mute / unmute clip'],
+    [KB.mod + KB.shift + 'D', 'Detach audio from video clip'],
+    [KB.mod + KB.shift + 'R', 'Record voice-over (Space stops)'],
     [KB.mod + 'T', 'Add title at playhead'],
     [KB.mod + 'Z', 'Undo'],
     [KB.mod + KB.shift + 'Z', 'Redo']
@@ -1506,6 +1677,7 @@ const SHORTCUTS = [
     ['Drag in the player', 'Move the selected clip or title'],
     ['Drag a corner in the player', 'Resize it'],
     ['Drag clip edges', 'Trim'],
+    ['Drag audio up / down', 'Move it to another audio track'],
     [KB.mod + 'scroll', 'Zoom timeline']
   ]]
 ];
@@ -1526,6 +1698,7 @@ const typingIn = (n) => !!n && (n.isContentEditable || (n.matches && n.matches('
 
 function onKey(e) {
   if (e.key === 'Escape') hideMenu();
+  if (rec.active && (e.code === 'Space' || e.key === 'Escape')) { e.preventDefault(); return stopRecording(); }
   if (e.target.matches('input, textarea, select') || document.querySelector('dialog[open]')) return;
   const mod = e.metaKey || e.ctrlKey;
   // Shortcuts listed in the app menu without a registered accelerator (they would type text otherwise).
@@ -1560,6 +1733,7 @@ const MENU_COMMANDS = {
   cut: () => copySelected(true), copy: () => copySelected(false), paste: () => pasteClip(), duplicate: () => duplicateSelected(),
   delete: () => deleteSelected(), rippleDelete: () => deleteSelected(true), selectAll: () => {},
   split: () => splitAtPlayhead(), trimStart: () => trimAtPlayhead('start'), trimEnd: () => trimAtPlayhead('end'),
+  detachAudio: () => detachAudio(), record: () => toggleRecording(),
   reverse: () => toggleReverse(), speedUp: () => speedStep(1), speedDown: () => speedStep(-1), mute: () => toggleMute(),
   addTitle: () => addTitle(TITLE_PRESETS[0], state.time),
   zoomIn: () => setZoom(state.pps * 1.25), zoomOut: () => setZoom(state.pps / 1.25), zoomFit: () => zoomFit(),
@@ -1598,6 +1772,8 @@ function setupUI() {
   $('#pasteBtn').onclick = () => pasteClip();
   $('#dupBtn').onclick = duplicateSelected;
   $('#reverseBtn').onclick = () => toggleReverse();
+  $('#detachBtn').onclick = () => detachAudio();
+  $('#recordBtn').onclick = toggleRecording;
   $('#shortcutsBtn').onclick = showShortcuts;
   $('#addTextBtn').onclick = () => addTitle(TITLE_PRESETS[0], state.time);
   $('#aspectSelect').onchange = (e) => { pushHistory(); setAspect(e.target.value); };

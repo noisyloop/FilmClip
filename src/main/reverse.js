@@ -48,4 +48,4 @@ async function reverseVideo(ffmpegPath, file, out, { duration, hasAudio }) {
   }
 }
 
-module.exports = { reverseVideo };
+module.exports = { reverseVideo, run };
