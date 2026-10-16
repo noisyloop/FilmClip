@@ -5,7 +5,7 @@ media library on the left, player in the middle, properties on the right, and a
 multi-track timeline along the bottom. **No account, no login, no watermark, no
 network access** — everything runs locally with a bundled ffmpeg.
 
-> Status: early / under construction.
+> Status: early / under construction. PC version coming soon as well.
 
 ## Features
 
