@@ -148,6 +148,40 @@
     return parts;
   }
 
+  /** Position / scale of a clip inside the frame. x, y are offsets as a fraction of the frame. */
+  function transformOf(clip) {
+    const t = clip.transform || {};
+    return { x: num(t.x, 0), y: num(t.y, 0), scale: Math.max(0.05, num(t.scale, 1)) };
+  }
+  function isIdentity(t) {
+    return Math.abs(t.x) < 1e-4 && Math.abs(t.y) < 1e-4 && Math.abs(t.scale - 1) < 1e-4;
+  }
+
+  /** Size of media fitted (letterboxed) into a W x H frame. */
+  function fitSize(m, W, H) {
+    const mw = num(m.width, 0) || W;
+    const mh = num(m.height, 0) || H;
+    const s = Math.min(W / mw, H / mh);
+    return { width: mw * s, height: mh * s };
+  }
+
+  /**
+   * Which file and range to read for a clip. A reversed clip reads the
+   * matching range of the pre-reversed copy (media.reversedPath) when one
+   * exists, otherwise the normal range plus reverse filters.
+   */
+  function sourceRange(clip, m) {
+    const cin = num(clip.in, 0);
+    const cout = num(clip.out, 0);
+    if (clip.reverse && m.type !== 'image') {
+      if (m.reversedPath && num(m.duration, 0) > 0) {
+        return { path: m.reversedPath, ss: Math.max(0, num(m.duration, 0) - cout), t: cout - cin, filterReverse: false };
+      }
+      return { path: m.path, ss: cin, t: cout - cin, filterReverse: true };
+    }
+    return { path: m.path, ss: cin, t: cout - cin, filterReverse: false };
+  }
+
   /** Video effect filters, in the same order the preview applies them. */
   function effectFilters(fx, outWidth) {
     const e = Object.assign({}, DEFAULT_EFFECTS, fx || {});
@@ -202,30 +236,50 @@
       if (D <= 0.01) continue;
       const speed = num(clip.speed, 1) || 1;
       const isImage = m.type === 'image';
+      const src = sourceRange(clip, m);
       let idx;
       if (isImage) {
         idx = addInput(['-loop', '1', '-framerate', String(fps), '-t', fmt(D), '-i', m.path]);
       } else {
-        idx = addInput(['-ss', fmt(num(clip.in, 0)), '-t', fmt(num(clip.out, 0) - num(clip.in, 0)), '-i', m.path]);
+        idx = addInput(['-ss', fmt(src.ss), '-t', fmt(src.t), '-i', src.path]);
       }
       const n = segments.length;
       const v = [];
+      // No pre-reversed copy of the media: reverse the trimmed segment in memory.
+      if (src.filterReverse) v.push('reverse');
       v.push(isImage ? 'setpts=PTS-STARTPTS' : `setpts=(PTS-STARTPTS)/${fmt(speed)}`);
       v.push(`fps=${fps}`);
-      v.push(`scale=${W}:${H}:force_original_aspect_ratio=decrease:flags=bicubic`);
-      v.push(...effectFilters(clip.effects, W));
-      v.push(`pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:color=black`, 'setsar=1', 'format=yuv420p');
+      const tf = transformOf(clip);
+      if (isIdentity(tf)) {
+        v.push(`scale=${W}:${H}:force_original_aspect_ratio=decrease:flags=bicubic`);
+        v.push(...effectFilters(clip.effects, W));
+        v.push(`pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:color=black`, 'setsar=1', 'format=yuv420p');
+      } else {
+        // Scaled / moved clip: fit, scale, then overlay onto a black frame.
+        const fit = fitSize(m, W, H);
+        const sw = even(fit.width * tf.scale);
+        const sh = even(fit.height * tf.scale);
+        v.push(`scale=${sw}:${sh}:flags=bicubic`, 'setsar=1');
+        v.push(...effectFilters(clip.effects, W));
+        v.push('format=yuva420p');
+        graph.push(`[${idx}:v]${v.join(',')}[fg${n}]`);
+        graph.push(`color=c=black:s=${W}x${H}:r=${fps}:d=${fmt(D)},format=yuv420p[bg${n}]`);
+        const ox = Math.round((W - sw) / 2 + tf.x * W);
+        const oy = Math.round((H - sh) / 2 + tf.y * H);
+        v.length = 0;
+        v.push(`overlay=${ox}:${oy}:eof_action=repeat`, 'setsar=1', 'format=yuv420p');
+      }
       const color = clip.fadeColor === 'white' ? 'white' : 'black';
       const fi = Math.min(num(clip.fadeIn, 0), D / 2);
       const fo = Math.min(num(clip.fadeOut, 0), D / 2);
       if (fi > 0) v.push(`fade=t=in:st=0:d=${fmt(fi)}:color=${color}`);
       if (fo > 0) v.push(`fade=t=out:st=${fmt(D - fo)}:d=${fmt(fo)}:color=${color}`);
       v.push(`tpad=stop_mode=clone:stop_duration=${fmt(D)}`, `trim=duration=${fmt(D)}`, 'setpts=PTS-STARTPTS');
-      graph.push(`[${idx}:v]${v.join(',')}[v${n}]`);
+      graph.push(`${isIdentity(tf) ? `[${idx}:v]` : `[bg${n}][fg${n}]`}${v.join(',')}[v${n}]`);
 
       const vol = clip.muted ? 0 : num(clip.volume, 1);
       if (!isImage && m.hasAudio) {
-        const a = ['asetpts=PTS-STARTPTS', ...atempoChain(speed)];
+        const a = [...(src.filterReverse ? ['areverse'] : []), 'asetpts=PTS-STARTPTS', ...atempoChain(speed)];
         if (Math.abs(vol - 1) > 1e-3) a.push(`volume=${fmt(vol)}`);
         if (fi > 0) a.push(`afade=t=in:st=0:d=${fmt(fi)}`);
         if (fo > 0) a.push(`afade=t=out:st=${fmt(D - fo)}:d=${fmt(fo)}`);
@@ -350,6 +404,7 @@
   return {
     RESOLUTIONS, FORMATS, VIDEO_KBPS, AUDIO_KBPS, DEFAULT_EFFECTS,
     clipDuration, mainTrackDuration, projectDuration, outputSize,
-    bitrates, estimateSize, buildFfmpegArgs, effectFilters, formatBytes
+    bitrates, estimateSize, buildFfmpegArgs, effectFilters, formatBytes,
+    transformOf, isIdentity, fitSize, sourceRange
   };
 });
