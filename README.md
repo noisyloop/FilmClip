@@ -71,3 +71,7 @@ npm run dist:mac   # build a DMG (must run on macOS)
 
 DMGs can only be built on macOS; the `Build macOS DMG` workflow builds arm64 and x64
 DMGs on every push.
+
+## Security
+
+Please report vulnerabilities privately; see [SECURITY.md](SECURITY.md).
