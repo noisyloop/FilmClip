@@ -90,10 +90,16 @@
       <span class="sep"></span>
       <button class="icon" id="splitBtn" title="Split at playhead (⌘B)">✂</button>
       <button class="icon" id="deleteBtn" title="Delete (⌫)">🗑</button>
-      <button class="icon" id="addTextBtn" title="Add title at playhead">T</button>
+      <button class="icon" id="copyBtn" title="Copy clip (⌘C)">⎘</button>
+      <button class="icon" id="pasteBtn" title="Paste at playhead (⌘V)">📋</button>
+      <button class="icon" id="dupBtn" title="Duplicate clip (⌘D)">⧉</button>
+      <button class="icon" id="reverseBtn" title="Reverse clip (⌘R)">↺</button>
+      <button class="icon" id="addTextBtn" title="Add title at playhead (⌘T)">T</button>
       <span class="grow"></span>
+      <button class="icon" id="shortcutsBtn" title="Keyboard shortcuts (⌘/)">⌨</button>
+      <span class="sep"></span>
       <span class="muted">Zoom</span>
-      <input type="range" id="zoom" min="10" max="300" value="60">
+      <input type="range" id="zoom" min="2" max="300" value="60">
     </div>
     <div class="timeline" id="timeline">
       <div class="track-heads">
@@ -108,6 +114,7 @@
           <div class="track" data-track="text" id="trackText"></div>
           <div class="track main" data-track="video" id="trackVideo"></div>
           <div class="track" data-track="audio" id="trackAudio"></div>
+          <div class="ctx-mark" id="ctxMark" hidden></div>
           <div class="playhead" id="playhead"><div class="knob"></div></div>
         </div>
       </div>
@@ -144,6 +151,14 @@
         <button value="cancel" class="btn" id="exCancel">Cancel</button>
         <button class="btn primary" id="exGo" value="default">Export</button>
       </menu>
+    </form>
+  </dialog>
+
+  <dialog id="shortcutsDialog">
+    <form method="dialog" class="sc-form">
+      <h2>Keyboard Shortcuts</h2>
+      <div class="sc-body" id="scBody"></div>
+      <menu><button class="btn primary" value="close">Close</button></menu>
     </form>
   </dialog>
 

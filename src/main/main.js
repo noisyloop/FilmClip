@@ -5,6 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const RP = require('../shared/render-plan');
+const { reverseVideo } = require('./reverse');
 
 const ffmpegPath = require('ffmpeg-static').replace('app.asar', 'app.asar.unpacked');
 
@@ -55,15 +56,36 @@ function buildMenu() {
       { label: 'Undo', accelerator: 'CmdOrCtrl+Z', click: () => send('undo') },
       { label: 'Redo', accelerator: 'Shift+CmdOrCtrl+Z', click: () => send('redo') },
       { type: 'separator' },
-      { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' },
+      { label: 'Cut', accelerator: 'CmdOrCtrl+X', click: () => send('cut') },
+      { label: 'Copy', accelerator: 'CmdOrCtrl+C', click: () => send('copy') },
+      { label: 'Paste', accelerator: 'CmdOrCtrl+V', click: () => send('paste') },
+      { label: 'Duplicate', accelerator: 'CmdOrCtrl+D', click: () => send('duplicate') },
+      { label: 'Delete', click: () => send('delete') },
+      { label: 'Ripple Delete', accelerator: 'Shift+Backspace', registerAccelerator: false, click: () => send('rippleDelete') },
+      { label: 'Select All', accelerator: 'CmdOrCtrl+A', click: () => send('selectAll') },
       { type: 'separator' },
-      { label: 'Split at Playhead', accelerator: 'CmdOrCtrl+B', click: () => send('split') }
+      { label: 'Split at Playhead', accelerator: 'CmdOrCtrl+B', click: () => send('split') },
+      { label: 'Trim Start to Playhead', accelerator: 'Alt+[', registerAccelerator: false, click: () => send('trimStart') },
+      { label: 'Trim End to Playhead', accelerator: 'Alt+]', registerAccelerator: false, click: () => send('trimEnd') },
+      { type: 'separator' },
+      { label: 'Reverse Clip', accelerator: 'CmdOrCtrl+R', click: () => send('reverse') },
+      { label: 'Speed Up', accelerator: 'CmdOrCtrl+Shift+.', registerAccelerator: false, click: () => send('speedUp') },
+      { label: 'Slow Down', accelerator: 'CmdOrCtrl+Shift+,', registerAccelerator: false, click: () => send('speedDown') },
+      { label: 'Mute / Unmute Clip', accelerator: 'CmdOrCtrl+Shift+M', click: () => send('mute') },
+      { type: 'separator' },
+      { label: 'Add Title at Playhead', accelerator: 'CmdOrCtrl+T', click: () => send('addTitle') }
     ] },
     { label: 'View', submenu: [
-      { role: 'reload' }, { role: 'toggleDevTools' }, { type: 'separator' },
-      { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { type: 'separator' }, { role: 'togglefullscreen' }
+      { label: 'Zoom In Timeline', accelerator: 'CmdOrCtrl+=', click: () => send('zoomIn') },
+      { label: 'Zoom Out Timeline', accelerator: 'CmdOrCtrl+-', click: () => send('zoomOut') },
+      { label: 'Fit Timeline to Window', accelerator: 'Shift+Z', registerAccelerator: false, click: () => send('zoomFit') },
+      { type: 'separator' },
+      { role: 'toggleDevTools' }, { type: 'separator' }, { role: 'togglefullscreen' }
     ] },
-    { role: 'windowMenu' }
+    { role: 'windowMenu' },
+    { role: 'help', submenu: [
+      { label: 'Keyboard Shortcuts', accelerator: 'CmdOrCtrl+/', click: () => send('shortcuts') }
+    ] }
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
@@ -112,6 +134,20 @@ function makeProxy(file) {
   });
 }
 
+const reverseJobs = new Map();
+/** Reversed copy of a whole video (used by reversed clips for preview and export), cached by path + mtime. */
+function makeReversed({ file, duration, hasAudio }) {
+  const dir = path.join(app.getPath('userData'), 'reversed');
+  fs.mkdirSync(dir, { recursive: true });
+  const stat = fs.statSync(file);
+  const out = path.join(dir, `${Buffer.from(file + stat.mtimeMs).toString('base64url').slice(-40)}.mp4`);
+  if (fs.existsSync(out)) return Promise.resolve(out);
+  if (!reverseJobs.has(out)) {
+    reverseJobs.set(out, reverseVideo(ffmpegPath, file, out, { duration, hasAudio }).finally(() => reverseJobs.delete(out)));
+  }
+  return reverseJobs.get(out);
+}
+
 ipcMain.handle('media:pick', async () => {
   const r = await dialog.showOpenDialog(win, {
     properties: ['openFile', 'multiSelections'],
@@ -121,6 +157,12 @@ ipcMain.handle('media:pick', async () => {
 });
 ipcMain.handle('media:probe', (_e, files) => Promise.all(files.map(probe)));
 ipcMain.handle('media:proxy', (_e, file) => makeProxy(file));
+ipcMain.handle('media:reverse', (_e, opts) => makeReversed(opts));
+ipcMain.handle('media:exists', (_e, p) => !!p && fs.existsSync(p));
+// Native text editing for focused input fields (menu items are routed through the renderer).
+ipcMain.handle('edit:native', (e, cmd) => {
+  if (['undo', 'redo', 'cut', 'copy', 'paste', 'selectAll'].includes(cmd)) e.sender[cmd]();
+});
 
 ipcMain.handle('project:save', async (_e, { filePath, data }) => {
   let target = filePath;
