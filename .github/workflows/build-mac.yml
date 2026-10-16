@@ -1,0 +1,46 @@
+name: Build macOS DMG
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  dmg:
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64, x64]
+    runs-on: macos-latest
+    env:
+      # ffmpeg-static downloads the ffmpeg binary for this architecture.
+      npm_config_arch: ${{ matrix.arch }}
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Check bundled ffmpeg architecture
+        run: file node_modules/ffmpeg-static/ffmpeg
+      - name: Smoke test export pipeline
+        if: matrix.arch == 'arm64'
+        run: npm test
+      - name: Build DMG
+        run: npx electron-builder --mac dmg --${{ matrix.arch }} --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FilmClip-${{ matrix.arch }}-dmg
+          path: dist/*.dmg
+          if-no-files-found: error
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.dmg

@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' file: data: blob:; media-src 'self' file: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'">
+  <title>FilmClip</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="titlebar">
+    <div class="brand"><span class="logo">▶</span> FilmClip</div>
+    <div class="project-name" id="projectName">Untitled Project</div>
+    <div class="title-actions">
+      <span class="badge">Free · Offline · No login</span>
+      <button class="btn primary" id="exportBtn">⬆ Export</button>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <section class="panel library">
+      <nav class="tabs" id="tabs">
+        <button data-tab="media" class="active"><i>🎞</i>Media</button>
+        <button data-tab="audio"><i>♪</i>Audio</button>
+        <button data-tab="titles"><i>T</i>Titles</button>
+        <button data-tab="transitions"><i>⧉</i>Transitions</button>
+        <button data-tab="effects"><i>✦</i>Effects</button>
+      </nav>
+      <div class="tab-body">
+        <div class="tab-pane active" data-pane="media">
+          <div class="pane-head">
+            <button class="btn" id="importBtn">＋ Import</button>
+            <span class="muted" id="libraryTotal"></span>
+          </div>
+          <div class="drop-zone" id="dropZone">
+            <div class="grid" id="mediaGrid"></div>
+            <div class="empty" id="mediaEmpty">
+              <div class="big">⇪</div>
+              <p>Import media files here</p>
+              <p class="muted">Drag &amp; drop videos, photos or music</p>
+            </div>
+          </div>
+        </div>
+        <div class="tab-pane" data-pane="audio">
+          <p class="muted pad">Imported music and sound files. Drag onto the audio track or double-click to add at the playhead.</p>
+          <div class="grid" id="audioGrid"></div>
+        </div>
+        <div class="tab-pane" data-pane="titles"><div class="grid" id="titleGrid"></div></div>
+        <div class="tab-pane" data-pane="transitions">
+          <p class="muted pad">Select a clip in the timeline, then click a transition to apply it to that clip.</p>
+          <div class="grid" id="transitionGrid"></div>
+        </div>
+        <div class="tab-pane" data-pane="effects">
+          <p class="muted pad">Select a clip in the timeline, then click an effect to apply it.</p>
+          <div class="grid" id="effectGrid"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel player">
+      <div class="player-head">
+        <span>Player</span>
+        <select id="aspectSelect" title="Project aspect ratio">
+          <option value="1920x1080">16:9 Widescreen</option>
+          <option value="1080x1920">9:16 Portrait</option>
+          <option value="1080x1080">1:1 Square</option>
+          <option value="1440x1080">4:3 Standard</option>
+        </select>
+      </div>
+      <div class="stage" id="stage"><canvas id="preview" width="960" height="540"></canvas></div>
+      <div class="transport">
+        <button class="icon" id="toStart" title="Go to start">⏮</button>
+        <button class="icon" id="stepBack" title="Previous frame">◀︎</button>
+        <button class="icon play" id="playBtn" title="Play/Pause (Space)">▶</button>
+        <button class="icon" id="stepFwd" title="Next frame">▶︎</button>
+        <button class="icon" id="toEnd" title="Go to end">⏭</button>
+        <span class="timecode"><b id="curTime">00:00:00.00</b> / <span id="totalTime">00:00:00.00</span></span>
+      </div>
+    </section>
+
+    <section class="panel inspector" id="inspector">
+      <div class="inspector-empty muted" id="inspectorEmpty">Select a clip in the timeline to edit its properties.</div>
+      <div id="inspectorBody"></div>
+    </section>
+  </main>
+
+  <section class="timeline-area">
+    <div class="timeline-toolbar">
+      <button class="icon" id="undoBtn" title="Undo (⌘Z)">↶</button>
+      <button class="icon" id="redoBtn" title="Redo (⇧⌘Z)">↷</button>
+      <span class="sep"></span>
+      <button class="icon" id="splitBtn" title="Split at playhead (⌘B)">✂</button>
+      <button class="icon" id="deleteBtn" title="Delete (⌫)">🗑</button>
+      <button class="icon" id="addTextBtn" title="Add title at playhead">T</button>
+      <span class="grow"></span>
+      <span class="muted">Zoom</span>
+      <input type="range" id="zoom" min="10" max="300" value="60">
+    </div>
+    <div class="timeline" id="timeline">
+      <div class="track-heads">
+        <div class="ruler-head"></div>
+        <div class="track-head">T <span>Titles</span></div>
+        <div class="track-head main">🎞 <span>Video</span></div>
+        <div class="track-head">♪ <span>Music</span></div>
+      </div>
+      <div class="tracks-scroll" id="tracksScroll">
+        <div class="tracks" id="tracks">
+          <div class="ruler" id="ruler"></div>
+          <div class="track" data-track="text" id="trackText"></div>
+          <div class="track main" data-track="video" id="trackVideo"></div>
+          <div class="track" data-track="audio" id="trackAudio"></div>
+          <div class="playhead" id="playhead"><div class="knob"></div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <dialog id="exportDialog">
+    <form method="dialog" class="export-form">
+      <h2>Export</h2>
+      <div class="export-grid">
+        <label>Name<input id="exName" value="My Video"></label>
+        <label>Format<select id="exFormat"></select></label>
+        <label>Resolution<select id="exRes"></select></label>
+        <label>Frame rate<select id="exFps"><option>24</option><option>25</option><option selected>30</option><option>50</option><option>60</option></select></label>
+        <label>Quality
+          <select id="exQuality">
+            <option value="low">Low (smaller file)</option>
+            <option value="medium" selected>Medium (recommended)</option>
+            <option value="high">High (larger file)</option>
+            <option value="target">Target file size…</option>
+          </select>
+        </label>
+        <label id="exTargetWrap" hidden>Target size (MB)<input id="exTarget" type="number" min="1" value="25"></label>
+      </div>
+      <div class="estimate">
+        <div><span class="muted">Duration</span><b id="exDur">–</b></div>
+        <div><span class="muted">Output</span><b id="exDims">–</b></div>
+        <div><span class="muted">Bitrate</span><b id="exBitrate">–</b></div>
+        <div><span class="muted">Estimated size</span><b id="exSize" class="accent">–</b></div>
+      </div>
+      <div class="progress" id="exProgressWrap" hidden><div id="exProgress"></div><span id="exProgressText"></span></div>
+      <p class="muted" id="exResult"></p>
+      <menu>
+        <button value="cancel" class="btn" id="exCancel">Cancel</button>
+        <button class="btn primary" id="exGo" value="default">Export</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast"></div>
+
+  <script src="../shared/render-plan.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
