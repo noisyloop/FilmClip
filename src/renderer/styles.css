@@ -79,7 +79,7 @@ button, select, input { font: inherit; color: inherit; }
 .player-head { display: flex; justify-content: space-between; align-items: center; padding: 6px 12px; color: var(--muted); }
 .player-head select { background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 2px 6px; }
 .stage { flex: 1; min-height: 0; min-width: 0; display: grid; place-items: center; background: #0d0e12; margin: 0 8px; border-radius: 4px; overflow: hidden; }
-#preview { width: 100%; height: 100%; object-fit: contain; background: #0d0e12; }
+#preview { touch-action: none; width: 100%; height: 100%; object-fit: contain; background: #0d0e12; }
 .transport { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 8px; position: relative; }
 .timecode { position: absolute; right: 12px; font-variant-numeric: tabular-nums; color: var(--muted); }
 .timecode b { color: var(--accent); font-weight: 500; }
@@ -119,7 +119,7 @@ button, select, input { font: inherit; color: inherit; }
 .track { height: 46px; position: relative; border-bottom: 1px solid var(--line); }
 .track.main { height: 70px; background: rgba(255,255,255,.015); }
 .track.drop { background: rgba(25,211,197,.08); }
-.clip { position: absolute; top: 4px; bottom: 4px; border-radius: 5px; overflow: hidden; cursor: grab; border: 1px solid rgba(255,255,255,.15); display: flex; align-items: flex-end; }
+.clip { touch-action: none; user-select: none; position: absolute; top: 4px; bottom: 4px; border-radius: 5px; overflow: hidden; cursor: grab; border: 1px solid rgba(255,255,255,.15); display: flex; align-items: flex-end; }
 .clip.video { background: var(--video) left center/auto 100% repeat-x; }
 .clip.text { background: var(--text-clip); }
 .clip.audio { background: var(--audio); }

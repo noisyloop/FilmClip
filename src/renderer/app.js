@@ -593,9 +593,17 @@ function startClipDrag(e, clip, track, node) {
   const m = mediaById(clip.mediaId);
   const maxOut = m && m.type !== 'image' ? m.duration || orig.out : 3600;
   let changed = false;
+  let pending = null;
+  let raf = 0;
   node.setPointerCapture(e.pointerId);
 
+  // Coalesce pointer events to one update per frame.
   const onMove = (ev) => {
+    pending = ev;
+    if (!raf) raf = requestAnimationFrame(() => { raf = 0; if (pending) applyMove(pending); });
+  };
+  const applyMove = (ev) => {
+    pending = null;
     const dt = (ev.clientX - x0) / state.pps;
     if (!changed && Math.abs(ev.clientX - x0) < 3) return;
     if (!changed) { pushHistory(); changed = true; }
@@ -621,12 +629,17 @@ function startClipDrag(e, clip, track, node) {
       node.style.zIndex = 4;
       return;
     }
-    renderTimeline();
+    // Reposition the existing nodes rather than rebuilding the timeline, which would
+    // destroy the node being dragged (and its pointer capture) on every move.
+    layoutClips();
     renderPreviewFrame();
   };
   const onUp = (ev) => {
-    node.removeEventListener('pointermove', onMove);
-    node.removeEventListener('pointerup', onUp);
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+    window.removeEventListener('pointercancel', onUp);
+    if (raf) { cancelAnimationFrame(raf); raf = 0; }
+    if (pending) applyMove(pending);
     if (changed && track === 'video' && mode === 'move') {
       const list = P().tracks.video;
       const from = list.indexOf(clip);
@@ -641,8 +654,29 @@ function startClipDrag(e, clip, track, node) {
     if (!changed) setTime(timeAtX(ev.clientX)); // plain click: move playhead too
     refreshAll();
   };
-  node.addEventListener('pointermove', onMove);
-  node.addEventListener('pointerup', onUp);
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+  window.addEventListener('pointercancel', onUp);
+}
+
+/** Update clip positions and widths in place during a drag. */
+function layoutClips() {
+  const place = (trackEl, clips, startOf, lenOf) => {
+    const nodes = new Map([...trackEl.children].map((n) => [n.dataset.id, n]));
+    clips.forEach((c, i) => {
+      const n = nodes.get(String(c.id));
+      if (!n) return;
+      n.style.left = startOf(c, i) * state.pps + 'px';
+      n.style.width = Math.max(4, lenOf(c) * state.pps) + 'px';
+    });
+  };
+  const starts = videoStarts();
+  place($('#trackVideo'), P().tracks.video, (c, i) => starts[i], RP.clipDuration);
+  place($('#trackText'), P().tracks.text, (c) => c.start, (c) => c.duration);
+  place($('#trackAudio'), P().tracks.audio, (c) => c.start, RP.clipDuration);
+  const width = (RP.projectDuration(P()) + 20) * state.pps;
+  if (width > tracksEl.offsetWidth) tracksEl.style.width = width + 'px';
+  updatePlayhead();
 }
 
 function updatePlayhead() {
@@ -1115,8 +1149,16 @@ function setupPreviewEvents() {
     const cx = box.x + box.w / 2, cy = box.y + box.h / 2;
     const d0 = Math.max(4, Math.hypot(p.x - cx, p.y - cy));
     let changed = false;
+    let pending = null;
+    let raf = 0;
     canvas.setPointerCapture(e.pointerId);
+    // Coalesce pointer events to one redraw per frame.
     const mv = (ev) => {
+      pending = ev;
+      if (!raf) raf = requestAnimationFrame(() => { raf = 0; if (pending) apply(pending); });
+    };
+    const apply = (ev) => {
+      pending = null;
       const q = canvasPoint(ev);
       if (!changed && Math.hypot(q.x - p.x, q.y - p.y) * q.s < 3) return;
       if (!changed) { pushHistory(); changed = true; }
@@ -1139,11 +1181,15 @@ function setupPreviewEvents() {
     const up = () => {
       canvas.removeEventListener('pointermove', mv);
       canvas.removeEventListener('pointerup', up);
+      canvas.removeEventListener('pointercancel', up);
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
+      if (pending) apply(pending);
       preview.guides = null;
       if (changed) refreshAll(); else drawFrame(state.time);
     };
     canvas.addEventListener('pointermove', mv);
     canvas.addEventListener('pointerup', up);
+    canvas.addEventListener('pointercancel', up);
   });
   canvas.addEventListener('pointermove', (e) => {
     if (e.buttons) return;
