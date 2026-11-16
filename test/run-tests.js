@@ -152,5 +152,24 @@ for (const format of ['mp4', 'mov', 'webm', 'gif', 'mp3']) {
   if (!ok) { failed++; console.error(r.stderr.split('\n').slice(-12).join('\n')); }
   console.log(`${ok ? 'ok  ' : 'FAIL'} overlapping effect clips`);
 }
+
+// ---- Hostile project files: effect types that are not real effects must be ignored, not crash or reach ffmpeg.
+{
+  const proj = { settings: { width: 320, height: 180, fps: 10 }, media: [{ id: 'v', type: 'video', path: path.join(tmp, 'a.mp4'), hasAudio: true, duration: 4, width: 640, height: 360 }],
+    tracks: { video: [{ id: 'c', mediaId: 'v', in: 0, out: 1, speed: 1 }], text: [], audio: [],
+      fx: [{ id: 'x1', type: 'constructor', start: 0, duration: 1 }, { id: 'x2', type: '__proto__', start: 0, duration: 1 }, { id: 'x3', type: 'toString', start: 0, duration: 1 },
+        { id: 'x4', type: 'blend', mode: "normal',drawtext=text='x", start: 0, duration: 1, params: { opacity: '1:x' } },
+        { id: 'x5', type: 'slices', start: 0, duration: 1, params: { rate: '1);x', shift: {}, height: null, density: 'NaN' } }] } };
+  let ok = false;
+  try {
+    const graph = RP.buildFfmpegArgs(proj, { format: 'mp4', resolution: 'project', quality: 'low', outputPath: path.join(tmp, 'hostile.mp4') }, {});
+    const text = graph.args.join(' ');
+    const r = spawnSync(ffmpeg, graph.args, { encoding: 'utf8' });
+    ok = !RP.fxDef('constructor') && !RP.fxDef('__proto__') && !!RP.fxDef('blend') && !text.includes('drawtext') && !text.includes(');x') && r.status === 0;
+    if (r.status) console.error(r.stderr.split('\n').slice(-8).join('\n'));
+  } catch (e) { console.error(e.message); }
+  if (!ok) failed++;
+  console.log(`${ok ? 'ok  ' : 'FAIL'} hostile effect clips are ignored or sanitised`);
+}
 process.exit(failed ? 1 : 0);
 })();

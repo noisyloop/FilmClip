@@ -156,13 +156,35 @@ ipcMain.handle('export:pickPath', async (_e, { defaultName, ext }) => {
   return r.canceled ? null : r.filePath;
 });
 
+/**
+ * Project files can come from someone else. Every media path is passed to ffmpeg as an input, where
+ * anything that is not a plain absolute path could be read as a protocol (http:, concat:, …) and make
+ * the offline app fetch URLs or stitch in other files. Returns the first such path, or null.
+ */
+function unsafeMediaPath(project) {
+  for (const m of (project && project.media) || []) {
+    for (const p of [m.path, m.reversedPath]) {
+      if (p == null) continue;
+      if (typeof p !== 'string' || !path.isAbsolute(p)) return String(p).slice(0, 200);
+    }
+  }
+  return null;
+}
+
 ipcMain.handle('export:start', async (_e, { project, opts, textImages }) => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'filmclip-'));
   const pngs = {};
+  let pngIndex = 0;
   for (const [id, dataUrl] of Object.entries(textImages || {})) {
-    const file = path.join(tmp, `${id}.png`);
-    fs.writeFileSync(file, Buffer.from(dataUrl.split(',')[1], 'base64'));
+    // Title ids come from the project file: never use them in a file name (path traversal).
+    const file = path.join(tmp, `title-${pngIndex++}.png`);
+    fs.writeFileSync(file, Buffer.from(String(dataUrl).split(',')[1] || '', 'base64'));
     pngs[id] = file;
+  }
+  const bad = unsafeMediaPath(project);
+  if (bad) {
+    fs.rmSync(tmp, { recursive: true, force: true });
+    return { ok: false, error: `Media path is not a local file: ${bad}` };
   }
   const { args, duration } = RP.buildFfmpegArgs(project, opts, pngs);
   return new Promise((resolve) => {

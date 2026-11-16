@@ -92,9 +92,12 @@
   };
   const FX_ORDER = ['blend', 'rgbsplit', 'slices', 'pixelate', 'scanlines', 'noise', 'wobble', 'shake', 'flicker'];
 
+  /** Definition of an effect type, or null. Types come from project files, so only own keys count. */
+  const fxDef = (type) => (typeof type === 'string' && Object.prototype.hasOwnProperty.call(FX_TYPES, type) ? FX_TYPES[type] : null);
+
   /** A fresh effect clip of a given type. */
   function newEffect(type, start, duration, id) {
-    const def = FX_TYPES[type];
+    const def = fxDef(type);
     const params = {};
     for (const p of def.params) params[p.key] = p.def;
     const fx = { id, type, start: Math.max(0, start || 0), duration: duration || 2.5, params };
@@ -103,7 +106,7 @@
   }
   /** Effect parameters with defaults filled in. */
   function fxParams(fx) {
-    const def = FX_TYPES[fx.type];
+    const def = fxDef(fx.type);
     const out = {};
     for (const p of (def ? def.params : [])) out[p.key] = Math.min(p.max, Math.max(p.min, num(fx.params && fx.params[p.key], p.def)));
     return out;
@@ -480,7 +483,7 @@
     // on top. They apply in track order to everything below (video and titles).
     let fxN = 0;
     for (const fx of project.tracks.fx || []) {
-      const def = FX_TYPES[fx.type];
+      const def = fxDef(fx.type);
       const s = Math.max(0, num(fx.start, 0));
       const e = Math.min(total, s + num(fx.duration, 0));
       const D = e - s;
@@ -595,7 +598,7 @@
     clipDuration, mainTrackDuration, projectDuration, outputSize,
     bitrates, estimateSize, buildFfmpegArgs, effectFilters, formatBytes,
     transformOf, isIdentity, fitSize, sourceRange,
-    BLEND_MODES, FX_TYPES, FX_ORDER, newEffect, fxParams, blendMode, fxFilters,
+    BLEND_MODES, FX_TYPES, FX_ORDER, fxDef, newEffect, fxParams, blendMode, fxFilters,
     hash, slicesGeom, sliceOffset, wobbleOffset, scanGeom, pixelBlock, shakeOrigin, flickerLevel
   };
 });
