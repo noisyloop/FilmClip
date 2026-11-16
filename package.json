@@ -1,7 +1,7 @@
 {
   "name": "filmclip",
   "productName": "FilmClip",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "A free, offline, no-login desktop video editor",
   "main": "src/main/main.js",
   "author": "FilmClip",
