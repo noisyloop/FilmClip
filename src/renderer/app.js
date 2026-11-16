@@ -23,7 +23,7 @@ const state = {
 };
 
 function newProject() {
-  return { version: 1, settings: { width: 1920, height: 1080, fps: 30 }, media: [], tracks: { video: [], text: [], audio: [] } };
+  return { version: 1, settings: { width: 1920, height: 1080, fps: 30 }, media: [], tracks: { video: [], text: [], audio: [], fx: [] } };
 }
 const P = () => state.project;
 const mediaById = (id) => P().media.find((m) => m.id === id);
@@ -38,7 +38,7 @@ function pushHistory() {
 }
 function restore(snap) {
   const s = JSON.parse(snap);
-  P().tracks = s.tracks;
+  P().tracks = Object.assign({ fx: [] }, s.tracks);
   P().settings = s.settings;
   if (state.selected && !selectedClip()) state.selected = null;
   state.time = clamp(state.time, 0, RP.projectDuration(P()));
@@ -221,6 +221,20 @@ function renderPresets() {
     t.onclick = () => applyToSelectedVisual((c) => p.apply(c), p.name);
     trg.appendChild(t);
   });
+  const gg = $('#glitchGrid');
+  RP.FX_ORDER.forEach((type) => {
+    const def = RP.FX_TYPES[type];
+    const t = el('div', 'tile fx');
+    t.draggable = true;
+    const c = document.createElement('canvas');
+    c.width = 192; c.height = 108;
+    drawFxSample(c.getContext('2d'), 192, 108, RP.newEffect(type, 0, 2, 'sample'), 0.37);
+    t.innerHTML = `<div class="thumb" style="background-image:url(${c.toDataURL()})"><button class="add" title="Add at playhead">＋</button></div><div class="meta"><div class="name" title="${esc(def.hint)}">${def.icon} ${def.label}</div></div>`;
+    t.addEventListener('dragstart', (e) => { e.dataTransfer.setData('application/x-fx', type); e.dataTransfer.effectAllowed = 'copy'; });
+    t.querySelector('.add').onclick = (e) => { e.stopPropagation(); addFx(type, state.time); };
+    t.ondblclick = () => addFx(type, state.time);
+    gg.appendChild(t);
+  });
   const eg = $('#effectGrid');
   EFFECT_PRESETS.forEach((p) => {
     const t = el('div', 'tile fx', `<div class="thumb" style="background:linear-gradient(135deg,#f7a23a,#3a6ff7 60%,#23b26d);filter:${p.css};${p.flip ? 'transform:scaleX(-1)' : ''}"><span style="${p.flip ? 'transform:scaleX(-1)' : ''}">${p.name}</span></div><div class="meta"><div class="name">${p.name}</div></div>`);
@@ -274,6 +288,20 @@ function addAudioClip(m, start) {
   refreshAll();
 }
 
+/** Drop an effect onto the timeline as its own clip; it works on everything below it. */
+function addFx(type, start) {
+  if (!RP.FX_TYPES[type]) return;
+  pushHistory();
+  const fx = RP.newEffect(type, start, 2.5, uid());
+  if (type === 'blend') {
+    const layer = P().media.find((m) => m.type === 'image' || m.type === 'video');
+    fx.mediaId = layer ? layer.id : null; // none: blends with a mirrored copy of the picture
+  }
+  P().tracks.fx.push(fx);
+  state.selected = { track: 'fx', id: fx.id };
+  refreshAll();
+}
+
 function addTitle(preset, start) {
   pushHistory();
   const clip = Object.assign({ id: uid(), start: Math.max(0, start), duration: 4 }, defaultTitle(), preset ? preset.props : {});
@@ -288,7 +316,9 @@ function videoStarts() {
 }
 /** Timeline start / length of any clip. */
 function clipStart(track, c) { return track === 'video' ? videoStarts()[P().tracks.video.indexOf(c)] : c.start; }
-function clipLen(track, c) { return track === 'text' ? c.duration : RP.clipDuration(c); }
+/** Titles and effects carry their own start / duration; media clips derive them from in / out / speed. */
+const isTimed = (track) => track === 'text' || track === 'fx';
+function clipLen(track, c) { return isTimed(track) ? c.duration : RP.clipDuration(c); }
 const clone = (o) => JSON.parse(JSON.stringify(o));
 const isImageClip = (c) => { const m = c.mediaId && mediaById(c.mediaId); return !!m && m.type === 'image'; };
 
@@ -298,7 +328,7 @@ const isImageClip = (c) => { const m = c.mediaId && mediaById(c.mediaId); return
  * so their timeline start corresponds to `out`.
  */
 function keepRange(track, c, a, b) {
-  if (track === 'text') { c.start += a; c.duration = b - a; return; }
+  if (isTimed(track)) { c.start += a; c.duration = b - a; return; }
   const sp = c.speed || 1;
   if (c.reverse) { const nout = c.out - a * sp; c.in = c.out - b * sp; c.out = nout; }
   else { const nin = c.in + a * sp; c.out = c.in + b * sp; c.in = nin; }
@@ -330,7 +360,7 @@ function splitClip(track, c, local) {
   b.id = uid();
   keepRange(track, c, 0, local);
   keepRange(track, b, local, len);
-  if (track !== 'text') { c.fadeOut = 0; b.fadeIn = 0; }
+  if (!isTimed(track)) { c.fadeOut = 0; b.fadeIn = 0; }
   const list = P().tracks[track];
   list.splice(list.indexOf(c) + 1, 0, b);
   state.selected = { track, id: b.id };
@@ -342,7 +372,7 @@ function splitAtPlayhead() {
   const t = state.time;
   const sel = selectedClip();
   if (sel && splitClip(state.selected.track, sel, t - clipStart(state.selected.track, sel))) return;
-  for (const track of ['video', 'text', 'audio']) {
+  for (const track of ['video', 'fx', 'text', 'audio']) {
     for (const c of P().tracks[track]) if (splitClip(track, c, t - clipStart(track, c))) return;
   }
   toast('Move the playhead over a clip to split it');
@@ -476,7 +506,7 @@ async function ensureReversed(m) {
 }
 
 function toggleMute(c) {
-  if (!c) { c = selectedClip(); if (!c || state.selected.track === 'text' || isImageClip(c)) return toast('Select a video or audio clip first'); }
+  if (!c) { c = selectedClip(); if (!c || state.selected.track === 'text' || state.selected.track === 'fx' || isImageClip(c)) return toast('Select a video or audio clip first'); }
   pushHistory();
   c.muted = !c.muted;
   refreshAll();
@@ -494,7 +524,7 @@ function editPoints() {
   const pts = new Set([0, RP.projectDuration(P())]);
   const starts = videoStarts();
   P().tracks.video.forEach((c, i) => { pts.add(starts[i]); pts.add(starts[i] + RP.clipDuration(c)); });
-  for (const c of P().tracks.text) { pts.add(c.start); pts.add(c.start + c.duration); }
+  for (const c of [...P().tracks.text, ...P().tracks.fx]) { pts.add(c.start); pts.add(c.start + c.duration); }
   for (const c of P().tracks.audio) { pts.add(c.start); pts.add(c.start + RP.clipDuration(c)); }
   return [...pts].sort((a, b) => a - b);
 }
@@ -559,11 +589,41 @@ function renderTimeline() {
     if (badges.length) d.appendChild(el('span', 'fx-badge', badges.join(' ')));
     tv.appendChild(d);
   });
+  renderFxTrack();
   const tt = $('#trackText'); tt.innerHTML = '';
   P().tracks.text.forEach((c) => tt.appendChild(clipEl(c, 'text', c.start, c.duration, 'T  ' + c.text.split('\n')[0])));
   const ta = $('#trackAudio'); ta.innerHTML = '';
   P().tracks.audio.forEach((c) => { const m = mediaById(c.mediaId); ta.appendChild(clipEl(c, 'audio', c.start, RP.clipDuration(c), '♪  ' + (m ? m.name : 'Missing') + (c.muted ? '  🔇' : ''))); });
   updatePlayhead();
+}
+
+/** Greedy lane assignment so overlapping effect clips are stacked instead of hidden behind each other. */
+function fxLanes() {
+  const lanes = new Map();
+  const ends = [];
+  [...P().tracks.fx].sort((a, b) => a.start - b.start).forEach((c) => {
+    let lane = ends.findIndex((e) => e <= c.start + 1e-6);
+    if (lane < 0) { lane = ends.length; ends.push(0); }
+    ends[lane] = c.start + c.duration;
+    lanes.set(c.id, lane);
+  });
+  return { lanes, count: Math.max(1, ends.length) };
+}
+const FX_LANE_H = 26;
+function renderFxTrack() {
+  const tf = $('#trackFx'); tf.innerHTML = '';
+  const { lanes, count } = fxLanes();
+  const h = Math.max(46, count * FX_LANE_H + 8);
+  tf.style.height = h + 'px';
+  $('#headFx').style.height = h + 'px';
+  P().tracks.fx.forEach((c) => {
+    const def = RP.FX_TYPES[c.type];
+    const d = clipEl(c, 'fx', c.start, c.duration, `${def ? def.icon : '✦'}  ${def ? def.label : c.type}${c.type === 'blend' ? ' · ' + RP.blendMode(c.mode).label : ''}`);
+    d.style.top = 4 + (lanes.get(c.id) || 0) * FX_LANE_H + 'px';
+    d.style.height = FX_LANE_H - 3 + 'px';
+    d.style.bottom = 'auto';
+    tf.appendChild(d);
+  });
 }
 
 function clipEl(c, track, start, len, label) {
@@ -608,7 +668,7 @@ function startClipDrag(e, clip, track, node) {
     if (!changed && Math.abs(ev.clientX - x0) < 3) return;
     if (!changed) { pushHistory(); changed = true; }
     const speed = clip.speed || 1;
-    if (track === 'text') {
+    if (isTimed(track)) {
       if (mode === 'move') clip.start = Math.max(0, orig.start + dt);
       else if (mode === 'right') clip.duration = Math.max(0.2, orig.duration + dt);
       else { const ns = clamp(orig.start + dt, 0, orig.start + orig.duration - 0.2); clip.duration = orig.duration - (ns - orig.start); clip.start = ns; }
@@ -672,6 +732,7 @@ function layoutClips() {
   };
   const starts = videoStarts();
   place($('#trackVideo'), P().tracks.video, (c, i) => starts[i], RP.clipDuration);
+  place($('#trackFx'), P().tracks.fx, (c) => c.start, (c) => c.duration);
   place($('#trackText'), P().tracks.text, (c) => c.start, (c) => c.duration);
   place($('#trackAudio'), P().tracks.audio, (c) => c.start, RP.clipDuration);
   const width = (RP.projectDuration(P()) + 20) * state.pps;
@@ -732,7 +793,9 @@ function setupTimelineEvents() {
       const t = Math.max(0, (e.clientX - rect.left) / state.pps);
       const mid = e.dataTransfer.getData('application/x-media') || e.dataTransfer.getData('application/x-audio');
       const title = e.dataTransfer.getData('application/x-title');
+      const fxType = e.dataTransfer.getData('application/x-fx');
       const kind = tr.dataset.track;
+      if (fxType) return addFx(fxType, t);
       if (title !== '') return addTitle(TITLE_PRESETS[Number(title)], t);
       const m = mid && mediaById(mid);
       if (!m) return;
@@ -779,6 +842,37 @@ function renderInspector() {
   };
   const pct = (v) => Math.round(v * 100) + '%';
   const secs = (v) => v.toFixed(1) + 's';
+
+  if (track === 'fx') {
+    const def = RP.FX_TYPES[c.type];
+    body.appendChild(el('div', 'insp-title', `${def.icon} ${def.label}`));
+    const s = section('Controls');
+    s.appendChild(el('p', 'muted hint', 'Affects everything below this clip on the timeline. Drag its edges on the timeline to make it longer or shorter.'));
+    if (c.type === 'blend') {
+      const mr = el('div', 'row full', '<span>Blend mode</span><select></select>');
+      const ms = mr.querySelector('select');
+      RP.BLEND_MODES.forEach((b) => ms.add(new Option(b.label, b.id, false, b.id === c.mode)));
+      ms.onchange = () => { pushHistory(); c.mode = ms.value; renderTimeline(); renderPreviewFrame(); };
+      s.appendChild(mr);
+      const lr = el('div', 'row full', '<span>Blend with</span><select></select>');
+      const ls = lr.querySelector('select');
+      ls.add(new Option('Mirrored copy of the picture', ''));
+      P().media.filter((x) => x.type === 'image' || x.type === 'video').forEach((x) => ls.add(new Option(x.name, x.id, false, x.id === c.mediaId)));
+      ls.onchange = () => { pushHistory(); c.mediaId = ls.value || null; renderPreviewFrame(); };
+      s.appendChild(lr);
+      if (!P().media.some((x) => x.type === 'image' || x.type === 'video')) s.appendChild(el('p', 'muted hint', 'Import a clip or photo to blend it with the timeline.'));
+    }
+    if (!c.params) c.params = {};
+    const FMT = { pct: pct, pct0: (v) => v + '%', px: (v) => v + 'px', deg: (v) => v + '°', hz: (v) => v + '/s', num: (v) => String(v) };
+    for (const prm of def.params) slider(s, prm.label, c.params, prm.key, prm.min, prm.max, prm.step, FMT[prm.fmt] || String, prm.def);
+    const t = section('Timing');
+    slider(t, 'Start', c, 'start', 0, Math.max(30, Math.ceil(RP.projectDuration(P())) + 10), 0.1, secs, 0);
+    slider(t, 'Duration', c, 'duration', 0.2, Math.max(30, Math.ceil(RP.projectDuration(P()))), 0.1, secs, 2.5);
+    const reset = el('button', 'btn small', 'Reset controls');
+    reset.onclick = () => { pushHistory(); c.params = RP.newEffect(c.type, 0, 1, 'x').params; renderInspector(); commit(); };
+    s.appendChild(reset);
+    return;
+  }
 
   if (track === 'text') {
     body.appendChild(el('div', 'insp-title', 'Title'));
@@ -932,7 +1026,7 @@ function titleAlpha(t, time) {
 const canvas = $('#preview');
 const ctx = canvas.getContext('2d');
 const preview = {
-  videos: new Map(), reversed: new Map(), images: new Map(), audios: new Map(),
+  videos: new Map(), reversed: new Map(), images: new Map(), audios: new Map(), layers: new Map(),
   active: null, raf: 0, wall: 0, t0: 0, rate: 1, guides: null
 };
 
@@ -1047,8 +1141,182 @@ function drawFrame(t) {
     const a = titleAlpha(tc, t);
     if (a > 0) drawTitle(ctx, tc, W, H, a);
   }
+  // Effect clips act on everything drawn so far, in track order.
+  for (const fx of P().tracks.fx) {
+    if (t >= fx.start && t <= fx.start + fx.duration) { ctx.save(); applyFx(ctx, W, H, fx, t - fx.start, layerSource(fx, t - fx.start)); ctx.restore(); }
+  }
   ctx.restore();
   drawSelection();
+}
+
+// ---------------------------------------------------------------- effect clips (preview)
+const fxCanvas = (name) => (fxCanvas[name] = fxCanvas[name] || document.createElement('canvas'));
+/** Offscreen canvas of a given size with a 2D context (resizing clears it). */
+function scratch(name, W, H) {
+  const c = fxCanvas(name);
+  if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
+  const g = c.getContext('2d', { willReadFrequently: false });
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.globalCompositeOperation = 'source-over';
+  g.globalAlpha = 1;
+  g.clearRect(0, 0, W, H);
+  return { c, g };
+}
+
+/** Draw a wrapped, horizontally shifted horizontal strip of src: output(x) = src(x + off). */
+function wrapStrip(g, src, W, y, h, off) {
+  const o = ((-off % W) + W) % W;
+  g.drawImage(src, 0, y, W, h, o, y, W, h);
+  if (o) g.drawImage(src, 0, y, W, h, o - W, y, W, h);
+}
+
+/**
+ * Apply one effect to everything already drawn on g (a W x H canvas context).
+ * lt is the time since the effect clip started; layer is the blend layer {el, w, h}.
+ * Mirrors the ffmpeg filters in render-plan.js so the export looks like the preview.
+ */
+function applyFx(g, W, H, fx, lt, layer) {
+  const p = RP.fxParams(fx);
+  const k = W / 1920;
+  const src = g.canvas;
+  if (fx.type === 'blend') {
+    const buf = scratch('lay', W, H);
+    const l = layer || { el: scratchMirror(src, W, H), w: W, h: H };
+    const s = Math.max(W / l.w, H / l.h);
+    buf.g.drawImage(l.el, (W - l.w * s) / 2, (H - l.h * s) / 2, l.w * s, l.h * s);
+    g.globalCompositeOperation = RP.blendMode(fx.mode).canvas;
+    g.globalAlpha = p.opacity;
+    g.drawImage(buf.c, 0, 0);
+    return;
+  }
+  const snap = scratch('snap', W, H);
+  snap.g.drawImage(src, 0, 0);
+  const buf = snap.c;
+  switch (fx.type) {
+    case 'rgbsplit': {
+      const r = (p.angle * Math.PI) / 180;
+      const dx = Math.round(Math.cos(r) * p.amount * k), dy = Math.round(Math.sin(r) * p.amount * k);
+      const tmp = scratch('chan', W, H);
+      g.fillStyle = '#000'; g.fillRect(0, 0, W, H);
+      g.globalCompositeOperation = 'lighter';
+      for (const [col, ox, oy] of [['#f00', -dx, -dy], ['#0f0', 0, 0], ['#00f', dx, dy]]) {
+        tmp.g.globalCompositeOperation = 'source-over';
+        tmp.g.fillStyle = '#000'; tmp.g.fillRect(0, 0, W, H);
+        tmp.g.drawImage(buf, ox, oy);
+        tmp.g.globalCompositeOperation = 'multiply';
+        tmp.g.fillStyle = col; tmp.g.fillRect(0, 0, W, H);
+        g.drawImage(tmp.c, 0, 0);
+      }
+      break;
+    }
+    case 'pixelate': {
+      const b = RP.pixelBlock(p, W);
+      const w = Math.ceil(W / b), h = Math.ceil(H / b);
+      const small = scratch('small', w, h);
+      small.g.imageSmoothingEnabled = false;
+      small.g.drawImage(buf, 0, 0, w, h);
+      g.imageSmoothingEnabled = false;
+      g.drawImage(small.c, 0, 0, w, h, 0, 0, w * b, h * b);
+      break;
+    }
+    case 'scanlines': {
+      const sg = RP.scanGeom(p, W);
+      g.fillStyle = `rgba(0,0,0,${p.darkness})`;
+      for (let y = 0; y < H; y += sg.gap) g.fillRect(0, y, W, sg.th);
+      break;
+    }
+    case 'noise': {
+      const n = scratch('noise', 160, 90);
+      const id = n.g.createImageData(160, 90);
+      for (let i = 0; i < id.data.length; i += 4) { const v = Math.random() * 255; id.data[i] = id.data[i + 1] = id.data[i + 2] = v; id.data[i + 3] = 255; }
+      n.g.putImageData(id, 0, 0);
+      g.imageSmoothingEnabled = false;
+      g.globalCompositeOperation = 'overlay';
+      g.globalAlpha = Math.min(1, p.amount / 45);
+      g.drawImage(n.c, 0, 0, W, H);
+      break;
+    }
+    case 'slices': {
+      const sg = RP.slicesGeom(p, W, H);
+      for (let b = 0; b * sg.bh < H; b++) {
+        const off = RP.sliceOffset(sg, b, lt);
+        if (!off) continue;
+        const y = b * sg.bh;
+        wrapStrip(g, buf, W, y, Math.min(sg.bh, H - y), off);
+      }
+      break;
+    }
+    case 'wobble': {
+      const step = Math.max(1, Math.round(2 * k));
+      for (let y = 0; y < H; y += step) wrapStrip(g, buf, W, y, Math.min(step, H - y), RP.wobbleOffset(p, W, y, lt));
+      break;
+    }
+    case 'shake': {
+      const o = RP.shakeOrigin(p, W, H, lt);
+      g.drawImage(buf, o.x, o.y, o.w, o.h, 0, 0, W, H);
+      break;
+    }
+    case 'flicker': {
+      const lv = RP.flickerLevel(p, lt);
+      if (lv > 0) { g.globalCompositeOperation = 'lighter'; g.fillStyle = `rgba(255,255,255,${lv})`; }
+      else g.fillStyle = `rgba(0,0,0,${-lv})`;
+      g.fillRect(0, 0, W, H);
+      break;
+    }
+  }
+}
+function scratchMirror(src, W, H) {
+  const m = scratch('mirror', W, H);
+  m.g.translate(W, 0); m.g.scale(-1, 1);
+  m.g.drawImage(src, 0, 0);
+  return m.c;
+}
+
+/** A colourful test picture with an effect applied (library thumbnails). */
+function drawFxSample(g, W, H, fx, lt) {
+  const grad = g.createLinearGradient(0, 0, W, H);
+  grad.addColorStop(0, '#f7a23a'); grad.addColorStop(0.5, '#3a6ff7'); grad.addColorStop(1, '#23b26d');
+  g.fillStyle = grad; g.fillRect(0, 0, W, H);
+  g.fillStyle = '#fff'; g.beginPath(); g.arc(W * 0.35, H * 0.5, H * 0.26, 0, 7); g.fill();
+  g.fillStyle = '#111'; g.fillRect(W * 0.55, H * 0.25, W * 0.28, H * 0.5);
+  g.save();
+  applyFx(g, W, H, fx, lt, null);
+  g.restore();
+}
+
+/** Element + size of the picture a blend effect mixes in, or null (mirror fallback). */
+function layerSource(fx, lt) {
+  if (fx.type !== 'blend' || !fx.mediaId) return null;
+  const m = mediaById(fx.mediaId);
+  if (!m || (m.type !== 'image' && m.type !== 'video')) return null;
+  if (m.type === 'image') {
+    let img = preview.images.get(m.id);
+    if (!img) { img = new Image(); img.onload = renderPreviewFrame; img.src = mediaSrc(m); preview.images.set(m.id, img); }
+    return img.complete && img.naturalWidth ? { el: img, w: img.naturalWidth, h: img.naturalHeight } : null;
+  }
+  const v = layerVideo(fx, m);
+  if (!state.playing) {
+    const want = layerTime(v, m, lt);
+    if (Math.abs(v.currentTime - want) > 0.03) { v.currentTime = want; v.addEventListener('seeked', () => drawFrame(state.time), { once: true }); }
+  }
+  return v.readyState >= 2 ? { el: v, w: v.videoWidth, h: v.videoHeight } : null;
+}
+/** Each blend effect gets its own muted <video> so it can sit at a different time than the main clip. */
+function layerVideo(fx, m) {
+  let L = preview.layers.get(fx.id);
+  if (!L || L.mid !== m.id) {
+    const v = document.createElement('video');
+    v.muted = true; v.preload = 'auto'; v.playsInline = true;
+    v.addEventListener('loadeddata', renderPreviewFrame);
+    v.src = mediaSrc(m);
+    L = { v, mid: m.id };
+    preview.layers.set(fx.id, L);
+  }
+  return L.v;
+}
+function layerTime(v, m, lt) {
+  const d = m.duration || v.duration;
+  return d > 0 && Number.isFinite(d) ? Math.max(0, lt) % d : 0;
 }
 
 // ---------------------------------------------------------------- move / resize in the player
@@ -1250,6 +1518,19 @@ function syncMedia(force) {
     preview.active = c.id;
   } else preview.active = null;
 
+  for (const fx of P().tracks.fx) {
+    const L = preview.layers.get(fx.id);
+    const m = fx.type === 'blend' && fx.mediaId ? mediaById(fx.mediaId) : null;
+    const live = m && m.type === 'video' && rate > 0 && t >= fx.start && t <= fx.start + fx.duration;
+    if (live) {
+      const v = layerVideo(fx, m);
+      const want = layerTime(v, m, t - fx.start);
+      if (force || Math.abs(v.currentTime - want) > 0.3) v.currentTime = want;
+      v.playbackRate = clamp(rate, 0.0625, 16);
+      if (v.paused) v.play().catch(() => {});
+    } else if (L && !L.v.paused) L.v.pause();
+  }
+
   for (const ac of P().tracks.audio) {
     const m = mediaById(ac.mediaId);
     if (!m) continue;
@@ -1308,6 +1589,7 @@ function pause() {
   $('#playBtn').textContent = '▶';
   for (const v of preview.videos.values()) v.pause();
   for (const v of preview.reversed.values()) v.pause();
+  for (const L of preview.layers.values()) L.v.pause();
   for (const a of preview.audios.values()) a.pause();
   renderPreviewFrame();
 }
@@ -1399,9 +1681,10 @@ async function openProject() {
   if (!r) return;
   pause();
   state.project = Object.assign(newProject(), r.data);
+  P().tracks = Object.assign({ video: [], text: [], audio: [], fx: [] }, P().tracks); // projects saved before effect clips existed
   state.filePath = r.filePath;
   state.undo = []; state.redo = []; state.selected = null; state.time = 0;
-  preview.videos.clear(); preview.reversed.clear(); preview.images.clear(); preview.audios.clear();
+  preview.videos.clear(); preview.reversed.clear(); preview.images.clear(); preview.audios.clear(); preview.layers.clear();
   for (const m of P().media) { m.reversing = false; await prepareMedia(m); }
   for (const c of P().tracks.video) if (c.reverse) ensureReversed(mediaById(c.mediaId));
   setAspect(`${P().settings.width}x${P().settings.height}`);
@@ -1410,9 +1693,10 @@ async function openProject() {
   renderLibrary();
 }
 function newProjectCmd() {
-  if (P().tracks.video.length + P().tracks.text.length + P().tracks.audio.length && !confirm('Start a new project? Unsaved changes will be lost.')) return;
+  if (P().tracks.video.length + P().tracks.text.length + P().tracks.audio.length + P().tracks.fx.length && !confirm('Start a new project? Unsaved changes will be lost.')) return;
   pause();
   state.project = newProject();
+  preview.layers.clear();
   state.filePath = null; state.undo = []; state.redo = []; state.selected = null; state.time = 0;
   setAspect('1920x1080'); setTitle(); refreshAll(); renderLibrary();
 }
@@ -1505,7 +1789,7 @@ function openClipMenu(e, track, c, t) {
   }
   if (track === 'video') items.push({ label: 'Reset Position & Size', disabled: RP.isIdentity(RP.transformOf(c)), action: () => resetTransform(c) });
   if (track === 'text') items.push('-', { label: 'Edit Text…', action: () => { const ta = $('#inspectorBody textarea'); if (ta) { ta.focus(); ta.select(); } } });
-  showMenu(e.clientX, e.clientY, items, track === 'text' || track === 'audio' || track === 'video' ? t : null);
+  showMenu(e.clientX, e.clientY, items, t);
 }
 
 // ---------------------------------------------------------------- keyboard shortcuts
@@ -1551,7 +1835,8 @@ const SHORTCUTS = [
     ['Right-click a clip', 'Cut, copy, paste, split here, reverse, speed…'],
     ['Drag in the player', 'Move the selected clip or title'],
     ['Drag a corner in the player', 'Resize it'],
-    ['Drag clip edges', 'Trim'],
+    ['Drag clip edges', 'Trim — or lengthen / shorten an effect clip'],
+    ['Drag an effect onto the timeline', 'Adds an effect clip that affects everything below it'],
     [KB.mod + 'scroll', 'Zoom timeline']
   ]]
 ];

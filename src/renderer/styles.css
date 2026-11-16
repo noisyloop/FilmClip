@@ -105,7 +105,7 @@ button, select, input { font: inherit; color: inherit; }
 .timeline-toolbar .sep { width: 1px; height: 18px; background: var(--line); margin: 0 6px; }
 .timeline-toolbar .grow { flex: 1; }
 .timeline-toolbar input[type=range] { width: 140px; accent-color: var(--accent); margin-left: 6px; }
-.timeline { flex: 1; display: flex; min-height: 0; }
+.timeline { flex: 1; display: flex; align-items: flex-start; min-height: 0; overflow-y: auto; overflow-x: hidden; }
 .track-heads { width: 96px; flex: none; border-right: 1px solid var(--line); }
 .ruler-head { height: 26px; border-bottom: 1px solid var(--line); }
 .track-head { height: 46px; display: flex; align-items: center; gap: 6px; padding: 0 10px; color: var(--muted); border-bottom: 1px solid var(--line); font-size: 12px; }
@@ -180,3 +180,9 @@ dialog::backdrop { background: rgba(0,0,0,.6); }
 .sc-row { display: grid; grid-template-columns: 130px 1fr; gap: 10px; padding: 3px 0; align-items: center; }
 .sc-row kbd { font: 12px/1.6 -apple-system, BlinkMacSystemFont, sans-serif; background: var(--panel-2); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 6px; justify-self: start; white-space: nowrap; }
 .sc-form menu { display: flex; justify-content: flex-end; padding: 0; margin: 14px 0 0; }
+
+/* Effects track */
+.clip.fx { background: linear-gradient(135deg, #e0457b, #8b3fd9); }
+.clip.fx .label { background: none; text-shadow: 0 1px 2px rgba(0,0,0,.6); }
+.track.fx { background: rgba(224,69,123,.05); }
+.pane-sub { margin: 12px 10px 0; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
