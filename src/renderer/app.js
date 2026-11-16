@@ -169,7 +169,7 @@ function mediaTile(m) {
   t.draggable = true;
   const icon = m.type === 'audio' ? '♪' : m.type === 'image' ? '🖼' : '🎞';
   const dur = m.type === 'image' ? '' : `<span class="dur">${shortTime(m.duration || 0)}</span>`;
-  t.innerHTML = `<div class="thumb" style="${m.thumb ? `background-image:url(${m.thumb})` : ''}">${m.thumb ? '' : icon}${dur}<button class="add" title="Add to timeline">＋</button></div>
+  t.innerHTML = `<div class="thumb" style="${m.thumb ? `background-image:url(${esc(m.thumb)})` : ''}">${m.thumb ? '' : icon}${dur}<button class="add" title="Add to timeline">＋</button></div>
     <div class="meta"><div class="name" title="${esc(m.path)}">${esc(m.name)}</div><div class="size">${RP.formatBytes(m.size)}${m.width ? ` · ${m.width}×${m.height}` : ''}</div></div>`;
   t.addEventListener('dragstart', (e) => { e.dataTransfer.setData('application/x-media', m.id); e.dataTransfer.effectAllowed = 'copy'; });
   t.querySelector('.add').addEventListener('click', (e) => { e.stopPropagation(); addMediaToTimeline(m); });
@@ -290,7 +290,7 @@ function addAudioClip(m, start) {
 
 /** Drop an effect onto the timeline as its own clip; it works on everything below it. */
 function addFx(type, start) {
-  if (!RP.FX_TYPES[type]) return;
+  if (!RP.fxDef(type)) return;
   pushHistory();
   const fx = RP.newEffect(type, start, 2.5, uid());
   if (type === 'blend') {
@@ -617,7 +617,7 @@ function renderFxTrack() {
   tf.style.height = h + 'px';
   $('#headFx').style.height = h + 'px';
   P().tracks.fx.forEach((c) => {
-    const def = RP.FX_TYPES[c.type];
+    const def = RP.fxDef(c.type);
     const d = clipEl(c, 'fx', c.start, c.duration, `${def ? def.icon : '✦'}  ${def ? def.label : c.type}${c.type === 'blend' ? ' · ' + RP.blendMode(c.mode).label : ''}`);
     d.style.top = 4 + (lanes.get(c.id) || 0) * FX_LANE_H + 'px';
     d.style.height = FX_LANE_H - 3 + 'px';
@@ -844,7 +844,8 @@ function renderInspector() {
   const secs = (v) => v.toFixed(1) + 's';
 
   if (track === 'fx') {
-    const def = RP.FX_TYPES[c.type];
+    const def = RP.fxDef(c.type);
+    if (!def) return;
     body.appendChild(el('div', 'insp-title', `${def.icon} ${def.label}`));
     const s = section('Controls');
     s.appendChild(el('p', 'muted hint', 'Affects everything below this clip on the timeline. Drag its edges on the timeline to make it longer or shorter.'));
@@ -1682,6 +1683,8 @@ async function openProject() {
   pause();
   state.project = Object.assign(newProject(), r.data);
   P().tracks = Object.assign({ video: [], text: [], audio: [], fx: [] }, P().tracks); // projects saved before effect clips existed
+  // Project files are untrusted: keep only well-formed effect clips of a known type.
+  P().tracks.fx = (Array.isArray(P().tracks.fx) ? P().tracks.fx : []).filter((c) => c && RP.fxDef(c.type) && Number.isFinite(c.start) && c.duration > 0);
   state.filePath = r.filePath;
   state.undo = []; state.redo = []; state.selected = null; state.time = 0;
   preview.videos.clear(); preview.reversed.clear(); preview.images.clear(); preview.audios.clear(); preview.layers.clear();

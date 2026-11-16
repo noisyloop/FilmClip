@@ -28,10 +28,11 @@ function run(ffmpegPath, args) {
 
 /**
  * Files written by a browser's MediaRecorder (and some screen recorders) are WebM / MKV files
- * with no duration in the header. Decode them once without output to find out how long they are.
+ * with no duration in the header. Read through them once (packets are copied, not decoded, so this
+ * stays quick for long recordings) to find out how long they are.
  */
 async function measureDuration(ffmpegPath, file) {
-  const err = await run(ffmpegPath, ['-hide_banner', '-nostats', '-i', file, '-map', '0:v:0?', '-map', '0:a:0?', '-f', 'null', '-']);
+  const err = await run(ffmpegPath, ['-hide_banner', '-nostats', '-i', file, '-map', '0:v:0?', '-map', '0:a:0?', '-c', 'copy', '-f', 'null', '-']);
   if (!err) return 0;
   const all = [...err.matchAll(/time=(\d+):(\d+):(\d+(?:\.\d+)?)/g)];
   if (!all.length) return 0;
