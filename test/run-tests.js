@@ -4,7 +4,9 @@ const fs = require('fs');
 const path = require('path');
 const RP = require('../src/shared/render-plan');
 const { reverseVideo } = require('../src/main/reverse');
-const ffmpeg = require('ffmpeg-static');
+const { probe } = require('../src/main/probe');
+// The bundled binary when installed, otherwise ffmpeg from PATH.
+const ffmpeg = (() => { try { const p = require('ffmpeg-static'); if (p && fs.existsSync(p)) return p; } catch (_) {} return 'ffmpeg'; })();
 const tmp = path.join(__dirname, 'tmp');
 fs.mkdirSync(tmp, { recursive: true });
 const gen = (args) => { const r = spawnSync(ffmpeg, ['-v', 'error', '-y', ...args]); if (r.status) throw new Error(String(r.stderr)); };
@@ -77,6 +79,78 @@ for (const format of ['mp4', 'mov', 'webm', 'gif', 'mp3']) {
   const ok = r.status === 0 && fs.existsSync(out);
   if (!ok) { failed++; console.error(r.stderr.split('\n').slice(-15).join('\n')); }
   console.log(`${ok ? 'ok  ' : 'FAIL'} ${format}  duration=${duration}s  estimate=${RP.formatBytes(RP.estimateSize(project, opts))}  actual=${ok ? RP.formatBytes(fs.statSync(out).size) : '-'}`);
+}
+
+// ---- WebM import: probe a normal WebM, an audio-only WebM and a recording with no duration in its header.
+{
+  const webm = path.join(tmp, 'clip.webm');
+  gen(['-f', 'lavfi', '-i', 'testsrc=s=320x180:r=15:d=2', '-f', 'lavfi', '-i', 'sine=f=330:d=2', '-c:v', 'libvpx-vp9', '-c:a', 'libopus', '-shortest', webm]);
+  const live = path.join(tmp, 'live.webm'); // like a browser MediaRecorder file: no duration / cues
+  gen(['-f', 'lavfi', '-i', 'testsrc=s=320x180:r=15:d=2', '-c:v', 'libvpx', '-f', 'webm', '-live', '1', live]);
+  const aud = path.join(tmp, 'voice.webm');
+  gen(['-f', 'lavfi', '-i', 'sine=f=330:d=2', '-c:a', 'libopus', aud]);
+  const checks = [
+    ['webm video', await probe(ffmpeg, webm), (i) => i.type === 'video' && i.hasAudio && i.width === 320 && Math.abs(i.duration - 2) < 0.2],
+    ['webm without duration', await probe(ffmpeg, live), (i) => i.type === 'video' && i.width === 320 && Math.abs(i.duration - 2) < 0.3],
+    ['webm audio only', await probe(ffmpeg, aud), (i) => i.type === 'audio' && i.hasAudio && Math.abs(i.duration - 2) < 0.2]
+  ];
+  for (const [name, info, test] of checks) {
+    const ok = !!info && test(info);
+    if (!ok) failed++;
+    console.log(`${ok ? 'ok  ' : 'FAIL'} import ${name} ${info ? `type=${info.type} dur=${info.duration.toFixed(2)}s ${info.width}x${info.height}` : 'null'}`);
+  }
+  // A WebM clip must also export (timeline edit with trim + effect).
+  const p2 = { settings: { width: 640, height: 360, fps: 15 }, media: [{ id: 'w', type: 'video', path: webm, hasAudio: true, duration: 2, width: 320, height: 180 }],
+    tracks: { video: [{ id: 'w1', mediaId: 'w', in: 0.2, out: 1.8, speed: 1 }], text: [], audio: [], fx: [] } };
+  const out = path.join(tmp, 'webm-out.mp4');
+  const r = spawnSync(ffmpeg, RP.buildFfmpegArgs(p2, { format: 'mp4', resolution: 'project', quality: 'low', outputPath: out }, {}).args, { encoding: 'utf8' });
+  const ok = r.status === 0 && fs.existsSync(out);
+  if (!ok) { failed++; console.error(r.stderr.split('\n').slice(-10).join('\n')); }
+  console.log(`${ok ? 'ok  ' : 'FAIL'} export from a webm clip`);
+}
+
+// ---- Effect clips: each one must render, change the picture inside its window and leave the rest alone.
+{
+  const base = { settings: { width: 320, height: 180, fps: 10 },
+    media: [{ id: 'v', type: 'video', path: path.join(tmp, 'a.mp4'), hasAudio: true, duration: 4, width: 640, height: 360 },
+      { id: 'i', type: 'image', path: path.join(tmp, 'img.png') }],
+    tracks: { video: [{ id: 'c', mediaId: 'v', in: 0, out: 3, speed: 1 }], text: [], audio: [], fx: [] } };
+  const render = (fx, name) => {
+    const proj = JSON.parse(JSON.stringify(base));
+    proj.tracks.fx = fx;
+    const out = path.join(tmp, `fx-${name}.mp4`);
+    const r = spawnSync(ffmpeg, RP.buildFfmpegArgs(proj, { format: 'mp4', resolution: 'project', quality: 'medium', outputPath: out }, {}).args, { encoding: 'utf8' });
+    return { out, r };
+  };
+  const frame = (file, t) => spawnSync(ffmpeg, ['-v', 'error', '-ss', String(t), '-i', file, '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'], { maxBuffer: 1 << 24 }).stdout;
+  const diff = (a, b) => { let d = 0; for (let i = 0; i < a.length; i += 7) d += Math.abs(a[i] - (b[i] || 0)); return d / (a.length / 7); };
+  const plain = render([], 'none');
+  if (plain.r.status) { failed++; console.error(plain.r.stderr.split('\n').slice(-8).join('\n')); }
+  const types = [...RP.FX_ORDER, 'blend-image', 'blend-video'];
+  for (const name of types) {
+    const type = name.split('-')[0];
+    const fx = RP.newEffect(type, 1, 1, 'f1');
+    if (name === 'blend-image') { fx.mediaId = 'i'; fx.mode = 'difference'; fx.params.opacity = 1; }
+    if (name === 'blend-video') { fx.mediaId = 'v'; fx.mode = 'screen'; }
+    const { out, r } = render([fx], name);
+    let ok = r.status === 0 && fs.existsSync(out);
+    let note = '';
+    if (ok) {
+      const inside = diff(frame(out, 1.5), frame(plain.out, 1.5));
+      const before = diff(frame(out, 0.4), frame(plain.out, 0.4));
+      const after = diff(frame(out, 2.5), frame(plain.out, 2.5));
+      ok = inside > 3 && before < 2 && after < 3 && before < inside / 3 && after < inside / 2;
+      note = `  changed ${inside.toFixed(1)} inside, ${before.toFixed(1)} before, ${after.toFixed(1)} after`;
+    } else console.error(r.stderr.split('\n').slice(-12).join('\n'));
+    if (!ok) failed++;
+    console.log(`${ok ? 'ok  ' : 'FAIL'} effect ${name}${note}`);
+  }
+  // Effects stack and several can overlap.
+  const stack = [RP.newEffect('rgbsplit', 0.5, 2, 's1'), RP.newEffect('slices', 1, 1.5, 's2'), RP.newEffect('noise', 1.2, 0.5, 's3')];
+  const { out, r } = render(stack, 'stack');
+  const ok = r.status === 0 && fs.existsSync(out);
+  if (!ok) { failed++; console.error(r.stderr.split('\n').slice(-12).join('\n')); }
+  console.log(`${ok ? 'ok  ' : 'FAIL'} overlapping effect clips`);
 }
 process.exit(failed ? 1 : 0);
 })();

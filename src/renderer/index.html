@@ -50,7 +50,11 @@
           <div class="grid" id="transitionGrid"></div>
         </div>
         <div class="tab-pane" data-pane="effects">
-          <p class="muted pad">Select a clip in the timeline, then click an effect to apply it.</p>
+          <h4 class="pane-sub">Glitch &amp; blend</h4>
+          <p class="muted pad">Drag onto the timeline (or double-click) to add an effect clip. It affects everything below it — drag its edges to make it longer or shorter.</p>
+          <div class="grid" id="glitchGrid"></div>
+          <h4 class="pane-sub">Looks</h4>
+          <p class="muted pad">Select a clip in the timeline, then click a look to apply it to that clip.</p>
           <div class="grid" id="effectGrid"></div>
         </div>
       </div>
@@ -104,6 +108,7 @@
     <div class="timeline" id="timeline">
       <div class="track-heads">
         <div class="ruler-head"></div>
+        <div class="track-head fx" id="headFx">✦ <span>Effects</span></div>
         <div class="track-head">T <span>Titles</span></div>
         <div class="track-head main">🎞 <span>Video</span></div>
         <div class="track-head">♪ <span>Music</span></div>
@@ -111,6 +116,7 @@
       <div class="tracks-scroll" id="tracksScroll">
         <div class="tracks" id="tracks">
           <div class="ruler" id="ruler"></div>
+          <div class="track fx" data-track="fx" id="trackFx"></div>
           <div class="track" data-track="text" id="trackText"></div>
           <div class="track main" data-track="video" id="trackVideo"></div>
           <div class="track" data-track="audio" id="trackAudio"></div>

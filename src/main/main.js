@@ -6,15 +6,13 @@ const os = require('os');
 const path = require('path');
 const RP = require('../shared/render-plan');
 const { reverseVideo } = require('./reverse');
+const { probe: probeFile, VIDEO_EXT, IMAGE_EXT, AUDIO_EXT } = require('./probe');
 
 const ffmpegPath = require('ffmpeg-static').replace('app.asar', 'app.asar.unpacked');
 
 let win;
 let exportProc = null;
 
-const VIDEO_EXT = ['mp4', 'mov', 'm4v', 'mkv', 'webm', 'avi', 'mts', 'm2ts', '3gp'];
-const IMAGE_EXT = ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'];
-const AUDIO_EXT = ['mp3', 'wav', 'm4a', 'aac', 'ogg', 'flac', 'opus'];
 
 function createWindow() {
   win = new BrowserWindow({
@@ -90,36 +88,6 @@ function buildMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
-function classify(file) {
-  const ext = path.extname(file).slice(1).toLowerCase();
-  if (IMAGE_EXT.includes(ext)) return 'image';
-  if (AUDIO_EXT.includes(ext)) return 'audio';
-  return 'video';
-}
-
-/** Read duration / size / audio presence by parsing `ffmpeg -i` output. */
-function probe(file) {
-  return new Promise((resolve) => {
-    const p = spawn(ffmpegPath, ['-hide_banner', '-i', file]);
-    let err = '';
-    p.stderr.on('data', (d) => { err += d; });
-    p.on('close', () => {
-      const info = { path: file, name: path.basename(file), type: classify(file), size: 0, duration: 0, width: 0, height: 0, hasAudio: false };
-      try { info.size = fs.statSync(file).size; } catch (_) {}
-      const dm = err.match(/Duration: (\d+):(\d+):(\d+(?:\.\d+)?)/);
-      if (dm) info.duration = Number(dm[1]) * 3600 + Number(dm[2]) * 60 + Number(dm[3]);
-      const vm = err.match(/Stream #.*Video:.*?(\d{2,5})x(\d{2,5})/);
-      if (vm) { info.width = Number(vm[1]); info.height = Number(vm[2]); }
-      info.hasAudio = /Stream #.*Audio:/.test(err);
-      if (/rotate\s*:\s*-?(90|270)/.test(err) || /rotation of -?90/.test(err)) [info.width, info.height] = [info.height, info.width];
-      if (info.type === 'image') info.duration = 5;
-      if (info.type === 'video' && !vm && info.hasAudio) info.type = 'audio';
-      resolve(info);
-    });
-    p.on('error', () => resolve(null));
-  });
-}
-
 /** Transcode to a lightweight H.264 proxy when Chromium can't decode the source. */
 function makeProxy(file) {
   const dir = path.join(app.getPath('userData'), 'proxies');
@@ -155,7 +123,7 @@ ipcMain.handle('media:pick', async () => {
   });
   return r.canceled ? [] : r.filePaths;
 });
-ipcMain.handle('media:probe', (_e, files) => Promise.all(files.map(probe)));
+ipcMain.handle('media:probe', (_e, files) => Promise.all(files.map((f) => probeFile(ffmpegPath, f))));
 ipcMain.handle('media:proxy', (_e, file) => makeProxy(file));
 ipcMain.handle('media:reverse', (_e, opts) => makeReversed(opts));
 ipcMain.handle('media:exists', (_e, p) => !!p && fs.existsSync(p));

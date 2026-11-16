@@ -44,6 +44,156 @@
     flipH: false, flipV: false
   };
 
+  // ---- Effect clips (the Effects track): glitches and blend modes drawn over everything below.
+  const BLEND_MODES = [
+    { id: 'normal', label: 'Normal', canvas: 'source-over' },
+    { id: 'multiply', label: 'Multiply', canvas: 'multiply' },
+    { id: 'screen', label: 'Screen', canvas: 'screen' },
+    { id: 'overlay', label: 'Overlay', canvas: 'overlay' },
+    { id: 'softlight', label: 'Soft Light', canvas: 'soft-light' },
+    { id: 'hardlight', label: 'Hard Light', canvas: 'hard-light' },
+    { id: 'difference', label: 'Difference', canvas: 'difference' },
+    { id: 'exclusion', label: 'Exclusion', canvas: 'exclusion' },
+    { id: 'addition', label: 'Add', canvas: 'lighter' },
+    { id: 'darken', label: 'Darken', canvas: 'darken' },
+    { id: 'lighten', label: 'Lighten', canvas: 'lighten' },
+    { id: 'dodge', label: 'Color Dodge', canvas: 'color-dodge' },
+    { id: 'burn', label: 'Color Burn', canvas: 'color-burn' }
+  ];
+  // fmt: how the inspector prints the value. Pixel sizes are for a 1920-wide frame and scale with the output.
+  const FX_TYPES = {
+    blend: { label: 'Blend', icon: '◧', hint: 'Blends another clip or photo into everything below',
+      params: [{ key: 'opacity', label: 'Opacity', min: 0, max: 1, step: 0.01, def: 0.8, fmt: 'pct' }] },
+    rgbsplit: { label: 'RGB Split', icon: '◍', hint: 'Colour channels drift apart',
+      params: [{ key: 'amount', label: 'Amount', min: 0, max: 80, step: 1, def: 14, fmt: 'px' },
+        { key: 'angle', label: 'Angle', min: 0, max: 360, step: 1, def: 0, fmt: 'deg' }] },
+    slices: { label: 'Glitch Slices', icon: '▤', hint: 'Horizontal bands jump sideways',
+      params: [{ key: 'shift', label: 'Shift', min: 0, max: 50, step: 1, def: 12, fmt: 'pct0' },
+        { key: 'height', label: 'Band height', min: 1, max: 30, step: 1, def: 6, fmt: 'pct0' },
+        { key: 'density', label: 'Density', min: 0, max: 1, step: 0.01, def: 0.5, fmt: 'pct' },
+        { key: 'rate', label: 'Speed', min: 1, max: 30, step: 1, def: 12, fmt: 'hz' }] },
+    pixelate: { label: 'Pixelate', icon: '▦', hint: 'Chunky mosaic blocks',
+      params: [{ key: 'size', label: 'Block size', min: 2, max: 120, step: 1, def: 24, fmt: 'px' }] },
+    scanlines: { label: 'Scanlines', icon: '≣', hint: 'CRT / VHS lines',
+      params: [{ key: 'spacing', label: 'Spacing', min: 2, max: 16, step: 1, def: 4, fmt: 'px' },
+        { key: 'darkness', label: 'Darkness', min: 0, max: 1, step: 0.01, def: 0.45, fmt: 'pct' }] },
+    noise: { label: 'Static Noise', icon: '░', hint: 'Grainy TV static',
+      params: [{ key: 'amount', label: 'Amount', min: 1, max: 100, step: 1, def: 30, fmt: 'num' }] },
+    wobble: { label: 'Wobble', icon: '≈', hint: 'Wavy, melting distortion',
+      params: [{ key: 'amount', label: 'Amount', min: 0, max: 80, step: 1, def: 18, fmt: 'px' },
+        { key: 'length', label: 'Wavelength', min: 20, max: 600, step: 5, def: 200, fmt: 'px' },
+        { key: 'speed', label: 'Speed', min: 0, max: 10, step: 0.1, def: 2, fmt: 'hz' }] },
+    shake: { label: 'Shake', icon: '⌁', hint: 'Jittery camera shake',
+      params: [{ key: 'strength', label: 'Strength', min: 0, max: 10, step: 0.1, def: 3, fmt: 'pct0' },
+        { key: 'rate', label: 'Speed', min: 1, max: 60, step: 1, def: 20, fmt: 'hz' }] },
+    flicker: { label: 'Flicker', icon: '☀', hint: 'Random brightness flashes',
+      params: [{ key: 'amount', label: 'Amount', min: 0, max: 1, step: 0.01, def: 0.35, fmt: 'pct' },
+        { key: 'rate', label: 'Speed', min: 1, max: 60, step: 1, def: 15, fmt: 'hz' }] }
+  };
+  const FX_ORDER = ['blend', 'rgbsplit', 'slices', 'pixelate', 'scanlines', 'noise', 'wobble', 'shake', 'flicker'];
+
+  /** A fresh effect clip of a given type. */
+  function newEffect(type, start, duration, id) {
+    const def = FX_TYPES[type];
+    const params = {};
+    for (const p of def.params) params[p.key] = p.def;
+    const fx = { id, type, start: Math.max(0, start || 0), duration: duration || 2.5, params };
+    if (type === 'blend') { fx.mode = 'multiply'; fx.mediaId = null; }
+    return fx;
+  }
+  /** Effect parameters with defaults filled in. */
+  function fxParams(fx) {
+    const def = FX_TYPES[fx.type];
+    const out = {};
+    for (const p of (def ? def.params : [])) out[p.key] = Math.min(p.max, Math.max(p.min, num(fx.params && fx.params[p.key], p.def)));
+    return out;
+  }
+  const blendMode = (id) => BLEND_MODES.find((m) => m.id === id) || BLEND_MODES[1];
+
+  // Deterministic pseudo-random numbers shared by the preview and ffmpeg (as an expression), so a
+  // glitch looks the same in the player and in the exported file.
+  function hash(a, b) {
+    const x = Math.sin(a * 12.9898 + b * 78.233) * 43758.5453;
+    return x - Math.floor(x);
+  }
+  function hashExpr(a, b) {
+    const s = `sin((${a})*12.9898+(${b})*78.233)*43758.5453`;
+    return `(${s}-floor(${s}))`;
+  }
+  const scaleOf = (W) => W / 1920;
+  function slicesGeom(p, W, H) {
+    return { bh: Math.max(2, Math.round((p.height / 100) * H)), shift: Math.round((p.shift / 100) * W), density: p.density, rate: p.rate };
+  }
+  /** Horizontal offset (px) of one band at local time lt: output(x) = source(x + offset). */
+  function sliceOffset(g, band, lt) {
+    const k = Math.floor(lt * g.rate);
+    return hash(band, k) > 1 - g.density ? Math.floor((hash(band + 0.5, k) - 0.5) * 2 * g.shift) : 0;
+  }
+  function wobbleOffset(p, W, y, lt) {
+    const k = scaleOf(W);
+    return Math.floor(p.amount * k * Math.sin((2 * Math.PI * y) / Math.max(4, p.length * k) + 2 * Math.PI * p.speed * lt));
+  }
+  function scanGeom(p, W) {
+    const gap = Math.max(2, Math.round(p.spacing * scaleOf(W)));
+    return { gap, th: Math.max(1, Math.floor(gap / 2)) };
+  }
+  function pixelBlock(p, W) { return Math.max(2, Math.round(p.size * scaleOf(W))); }
+  function shakeGeom(p, W, H) {
+    const m = p.strength / 100;
+    return { cw: even(W * (1 - 2 * m)), ch: even(H * (1 - 2 * m)) };
+  }
+  function shakeOrigin(p, W, H, lt) {
+    const g = shakeGeom(p, W, H);
+    const k = Math.floor(lt * p.rate);
+    return { x: (W - g.cw) * hash(k, 1.3), y: (H - g.ch) * hash(k, 7.7), w: g.cw, h: g.ch };
+  }
+  function flickerLevel(p, lt) { return p.amount * 2 * (hash(Math.floor(lt * p.rate), 3.1) - 0.5); }
+
+  /** ffmpeg filters for one glitch effect, run on a stream whose time starts at 0. Not used for blend. */
+  function fxFilters(fx, W, H) {
+    const p = fxParams(fx);
+    const k = scaleOf(W);
+    switch (fx.type) {
+      case 'rgbsplit': {
+        const a = p.amount * k, r = (p.angle * Math.PI) / 180;
+        const dx = Math.round(Math.cos(r) * a), dy = Math.round(Math.sin(r) * a);
+        return [`rgbashift=rh=${-dx}:rv=${-dy}:bh=${dx}:bv=${dy}:edge=smear`, 'format=yuv420p'];
+      }
+      case 'pixelate': {
+        const s = pixelBlock(p, W);
+        return [`scale=${Math.ceil(W / s)}:${Math.ceil(H / s)}:flags=neighbor`, `scale=${W}:${H}:flags=neighbor`, 'format=yuv420p'];
+      }
+      case 'scanlines': {
+        const g = scanGeom(p, W);
+        return [`drawgrid=w=0:h=${g.gap}:t=${g.th}:c=black@${fmt(p.darkness)}`];
+      }
+      case 'noise':
+        return [`noise=alls=${Math.round(p.amount)}:allf=t`];
+      case 'slices': {
+        const g = slicesGeom(p, W, H);
+        const band = `floor(Y/${g.bh})`;
+        const step = `floor(T*${g.rate})`;
+        const off = `if(gt(${hashExpr(band, step)},${fmt(1 - g.density)}),floor((${hashExpr(`${band}+0.5`, step)}-0.5)*2*${g.shift}),0)`;
+        const at = (c) => `${c}='${c}(mod(X+${off}+W,W),Y)'`;
+        return ['format=gbrp', `geq=${at('r')}:${at('g')}:${at('b')}`, 'format=yuv420p'];
+      }
+      case 'wobble': {
+        const off = `floor(${fmt(p.amount * k)}*sin(2*PI*Y/${fmt(Math.max(4, p.length * k))}+2*PI*${fmt(p.speed)}*T))`;
+        const at = (c) => `${c}='${c}(mod(X+${off}+W,W),Y)'`;
+        return ['format=gbrp', `geq=${at('r')}:${at('g')}:${at('b')}`, 'format=yuv420p'];
+      }
+      case 'shake': {
+        const g = shakeGeom(p, W, H);
+        const step = `floor(t*${p.rate})`;
+        return [`crop=w=${g.cw}:h=${g.ch}:x='(iw-ow)*${hashExpr(step, 1.3)}':y='(ih-oh)*${hashExpr(step, 7.7)}'`, `scale=${W}:${H}:flags=bicubic`, 'setsar=1'];
+      }
+      case 'flicker':
+        return [`eq=brightness='${fmt(p.amount)}*2*(${hashExpr(`floor(t*${p.rate})`, 3.1)}-0.5)':eval=frame`];
+      default:
+        return [];
+    }
+  }
+
   function num(v, d) {
     const n = Number(v);
     return Number.isFinite(n) ? n : d;
@@ -326,6 +476,45 @@
       t++;
     }
 
+    // Effect clips: run the stretch of video under each one through its filters, then lay it back
+    // on top. They apply in track order to everything below (video and titles).
+    let fxN = 0;
+    for (const fx of project.tracks.fx || []) {
+      const def = FX_TYPES[fx.type];
+      const s = Math.max(0, num(fx.start, 0));
+      const e = Math.min(total, s + num(fx.duration, 0));
+      const D = e - s;
+      if (!def || D < 0.04) continue;
+      const n = fxN++;
+      graph.push(`[${vLabel}]split=2[fb${n}][fs${n}]`);
+      graph.push(`[fs${n}]trim=start=${fmt(s)}:end=${fmt(e)},setpts=PTS-STARTPTS,setsar=1[fl${n}]`);
+      let tail = `fl${n}`;
+      if (fx.type === 'blend') {
+        const m = media[fx.mediaId];
+        if (m && (m.type === 'image' || m.type === 'video')) {
+          const idx = m.type === 'image'
+            ? addInput(['-loop', '1', '-framerate', String(fps), '-t', fmt(D), '-i', m.path])
+            : addInput(['-stream_loop', '-1', '-t', fmt(D), '-i', m.path]);
+          graph.push(`[${idx}:v]fps=${fps},scale=${W}:${H}:force_original_aspect_ratio=increase:flags=bicubic,crop=${W}:${H},setsar=1,format=yuv420p,trim=duration=${fmt(D)},setpts=PTS-STARTPTS[ly${n}]`);
+        } else {
+          // No layer picked: blend the picture with a mirrored copy of itself.
+          graph.push(`[${tail}]split=2[fm${n}a][fm${n}b]`);
+          graph.push(`[fm${n}b]hflip[ly${n}]`);
+          tail = `fm${n}a`;
+        }
+        const p = fxParams(fx);
+        graph.push(`[${tail}]format=yuv420p[fq${n}]`);
+        graph.push(`[fq${n}][ly${n}]blend=all_mode=${blendMode(fx.mode).id}:all_opacity=${fmt(p.opacity)}:shortest=1,format=yuv420p[fo${n}]`);
+        tail = `fo${n}`;
+      } else {
+        graph.push(`[${tail}]${fxFilters(fx, W, H).join(',')}[fo${n}]`);
+        tail = `fo${n}`;
+      }
+      graph.push(`[${tail}]setpts=PTS+${fmt(s)}/TB[fx${n}]`);
+      graph.push(`[fb${n}][fx${n}]overlay=0:0:eof_action=pass:enable='between(t,${fmt(s)},${fmt(e)})'[vfx${n}]`);
+      vLabel = `vfx${n}`;
+    }
+
     // Music / voice-over track.
     const extra = [];
     project.tracks.audio.forEach((ac, i) => {
@@ -405,6 +594,8 @@
     RESOLUTIONS, FORMATS, VIDEO_KBPS, AUDIO_KBPS, DEFAULT_EFFECTS,
     clipDuration, mainTrackDuration, projectDuration, outputSize,
     bitrates, estimateSize, buildFfmpegArgs, effectFilters, formatBytes,
-    transformOf, isIdentity, fitSize, sourceRange
+    transformOf, isIdentity, fitSize, sourceRange,
+    BLEND_MODES, FX_TYPES, FX_ORDER, newEffect, fxParams, blendMode, fxFilters,
+    hash, slicesGeom, sliceOffset, wobbleOffset, scanGeom, pixelBlock, shakeOrigin, flickerLevel
   };
 });

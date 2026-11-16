@@ -31,9 +31,13 @@ first-launch step.
 - **Move & resize in the player**: select a clip or title, drag it to move (snaps to the center lines), drag a corner to resize.
 - **Reverse**: reversed clips play backwards in the preview and export (FilmClip builds a reversed copy of the video in the background the first time).
 - **Effects**: brightness, contrast, saturation, blur, black & white, sepia, invert, vignette, flip, plus one-click presets (Vivid, Faded, Moody, Bright, Mirror…).
+- **Effect clips**: drag a glitch or blend effect from the Effects tab onto the **Effects** track and it becomes its own clip that affects everything below it (video and titles). Drag its edges to make it longer or shorter, drag it to move it, stack several to combine them. Each has its own controls in the inspector:
+  - **Blend** — blend another clip or photo (or a mirrored copy of the picture) into the timeline with 13 blend modes (multiply, screen, overlay, soft/hard light, difference, add, dodge, burn…) and an opacity slider.
+  - **Glitches** — RGB Split, Glitch Slices, Pixelate, Scanlines, Static Noise, Wobble, Shake and Flicker.
 - **Transitions**: fade in/out, dip to white, quick fade.
 - **Titles**: 8 presets (basic, subtitle, lower third, neon, …) with font, size, color, outline, glow, background box, position and fade.
 - **Audio**: clip volume/mute, speed (0.25×–4×), music track with fades.
+- **Import** MP4, MOV, WebM (incl. browser recordings with no duration), MKV, AVI and more, plus photos and audio.
 - **Export** to MP4, MOV, WebM, GIF or MP3 at 480p–4K, 24–60 fps. Pick Low/Medium/High quality or a **target file size in MB**; the dialog shows a live **estimated file size** and the actual size when done.
 - Projects save as `.fcproj` files.
 
